@@ -156,6 +156,46 @@ int nn_total_params(const Network *net) {
     return t;
 }
 
+/* ── metrics ─────────────────────────────────────────────────────── */
+
+float nn_accuracy_binary(const Tensor *pred, const Tensor *target) {
+    assert(pred->size == target->size);
+    int correct = 0;
+    for (size_t i = 0; i < pred->size; i++) {
+        int p = pred->data[i] >= 0.5f ? 1 : 0;
+        int t = target->data[i] >= 0.5f ? 1 : 0;
+        if (p == t) correct++;
+    }
+    return (float)correct / (float)pred->size;
+}
+
+float nn_accuracy_multiclass(const Tensor *pred, const Tensor *target) {
+    assert(pred->ndim == 2 && target->ndim == 2);
+    assert(pred->shape[0] == target->shape[0]);
+    assert(pred->shape[1] == target->shape[1]);
+    int batch   = pred->shape[0];
+    int classes = pred->shape[1];
+    int correct = 0;
+    for (int b = 0; b < batch; b++) {
+        /* argmax of pred row */
+        int pred_cls = 0;
+        float best   = pred->data[b * classes];
+        for (int c = 1; c < classes; c++) {
+            float v = pred->data[b * classes + c];
+            if (v > best) { best = v; pred_cls = c; }
+        }
+        /* argmax of target row (handles one-hot) */
+        int true_cls = 0;
+        float tbest  = target->data[b * classes];
+        for (int c = 1; c < classes; c++) {
+            float v = target->data[b * classes + c];
+            if (v > tbest) { tbest = v; true_cls = c; }
+        }
+        if (pred_cls == true_cls) correct++;
+    }
+    return (float)correct / (float)batch;
+}
+
 /* ── weight I/O ──────────────────────────────────────────────────── */
 
 int nn_save(const Network *net, const char *path) {
