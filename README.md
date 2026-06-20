@@ -8,10 +8,10 @@
 **neuralc** is an open-source neural network and tensor library written in C.  
 It is **not** a copy or port of TensorFlow or PyTorch — it is an original library built from scratch, inspired by the same ideas but designed for:
 
-- 🚀 **Raw speed** — C runs close to the metal, no Python overhead
-- 🔩 **Simplicity** — readable source code anyone can understand and modify
-- 📦 **Zero dependencies** — only needs a C compiler and `libm`
-- 🖥️ **Portability** — runs on Linux, macOS, Windows, embedded systems
+-  **Raw speed** — C runs close to the metal, no Python overhead
+-  **Simplicity** — readable source code anyone can understand and modify
+-  **Zero dependencies** — only needs a C compiler and `libm`
+-  **Portability** — runs on Linux, macOS, Windows, embedded systems
 
 ---
 
