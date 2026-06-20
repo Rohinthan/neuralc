@@ -3,7 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
-#include <assert.h>
+/* assert.h replaced by CF_CHECK */
 #include <time.h>
 
 /* ── helpers ─────────────────────────────────────────────────────── */
@@ -34,7 +34,7 @@ static float randn_sample(void) {
 /* ── lifecycle ───────────────────────────────────────────────────── */
 
 Tensor *tensor_create(const int *shape, int ndim) {
-    assert(ndim > 0 && ndim <= TENSOR_MAX_DIMS);
+    CF_CHECK(ndim > 0 && ndim <= TENSOR_MAX_DIMS, "ndim out of range [1..TENSOR_MAX_DIMS]");
     Tensor *t = (Tensor *)malloc(sizeof(Tensor));
     if (!t) return NULL;
     t->ndim = ndim;
@@ -115,7 +115,7 @@ void tensor_set(Tensor *t, const int *idx, float val) {
 
 #define ELWISE2(name, expr)                                         \
 void name(const Tensor *a, const Tensor *b, Tensor *out) {         \
-    assert(a->size == b->size && a->size == out->size);             \
+    CF_CHECK_SHAPE(a, out); CF_CHECK_SHAPE(b, out);             \
     for (size_t i = 0; i < a->size; i++)                           \
         out->data[i] = (expr);                                      \
 }
@@ -126,39 +126,39 @@ ELWISE2(tensor_mul, a->data[i] * b->data[i])
 ELWISE2(tensor_div, a->data[i] / b->data[i])
 
 void tensor_scale(const Tensor *a, float s, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++) out->data[i] = a->data[i] * s;
 }
 void tensor_add_scalar(const Tensor *a, float s, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++) out->data[i] = a->data[i] + s;
 }
 void tensor_neg(const Tensor *a, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++) out->data[i] = -a->data[i];
 }
 void tensor_abs(const Tensor *a, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++) out->data[i] = fabsf(a->data[i]);
 }
 void tensor_square(const Tensor *a, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++) out->data[i] = a->data[i] * a->data[i];
 }
 void tensor_sqrt_t(const Tensor *a, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++) out->data[i] = sqrtf(a->data[i]);
 }
 void tensor_exp(const Tensor *a, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++) out->data[i] = expf(a->data[i]);
 }
 void tensor_log_t(const Tensor *a, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++) out->data[i] = logf(a->data[i]);
 }
 void tensor_clip(const Tensor *a, float lo, float hi, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++) {
         float v = a->data[i];
         out->data[i] = v < lo ? lo : (v > hi ? hi : v);
@@ -193,11 +193,11 @@ float tensor_norm(const Tensor *t) {
 
 void tensor_matmul(const Tensor *a, const Tensor *b, Tensor *out) {
     /* a: [M,K]  b: [K,N]  out: [M,N] */
-    assert(a->ndim == 2 && b->ndim == 2 && out->ndim == 2);
+    CF_CHECK(a->ndim==2 && b->ndim==2 && out->ndim==2, "matmul: all tensors must be 2D");
     int M = a->shape[0], K = a->shape[1];
     int K2 = b->shape[0], N = b->shape[1];
-    assert(K == K2);
-    assert(out->shape[0] == M && out->shape[1] == N);
+    CF_CHECK(K == K2, "matmul: inner dimensions must match (a.cols == b.rows)");
+    CF_CHECK(out->shape[0]==M && out->shape[1]==N, "matmul: output shape mismatch");
     memset(out->data, 0, out->size * sizeof(float));
     for (int i = 0; i < M; i++)
         for (int k = 0; k < K; k++) {
@@ -208,9 +208,9 @@ void tensor_matmul(const Tensor *a, const Tensor *b, Tensor *out) {
 }
 
 void tensor_transpose(const Tensor *a, Tensor *out) {
-    assert(a->ndim == 2 && out->ndim == 2);
+    CF_CHECK(a->ndim==2 && out->ndim==2, "transpose: tensors must be 2D");
     int R = a->shape[0], C = a->shape[1];
-    assert(out->shape[0] == C && out->shape[1] == R);
+    CF_CHECK(out->shape[0]==C && out->shape[1]==R, "transpose: output shape must be [cols, rows]");
     for (int i = 0; i < R; i++)
         for (int j = 0; j < C; j++)
             out->data[j*R + i] = a->data[i*C + j];
@@ -219,34 +219,34 @@ void tensor_transpose(const Tensor *a, Tensor *out) {
 /* ── activations ─────────────────────────────────────────────────── */
 
 void tensor_relu(const Tensor *a, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++)
         out->data[i] = a->data[i] > 0.0f ? a->data[i] : 0.0f;
 }
 void tensor_relu_grad(const Tensor *a, const Tensor *grad, Tensor *out) {
-    assert(a->size == grad->size && a->size == out->size);
+    CF_CHECK_SHAPE(a, grad); CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++)
         out->data[i] = a->data[i] > 0.0f ? grad->data[i] : 0.0f;
 }
 void tensor_sigmoid(const Tensor *a, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++)
         out->data[i] = 1.0f / (1.0f + expf(-a->data[i]));
 }
 void tensor_sigmoid_grad(const Tensor *sig, const Tensor *grad, Tensor *out) {
-    assert(sig->size == grad->size && sig->size == out->size);
+    CF_CHECK_SHAPE(sig, grad); CF_CHECK_SHAPE(sig, out);
     for (size_t i = 0; i < sig->size; i++) {
         float s = sig->data[i];
         out->data[i] = grad->data[i] * s * (1.0f - s);
     }
 }
 void tensor_tanh_t(const Tensor *a, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     for (size_t i = 0; i < a->size; i++)
         out->data[i] = tanhf(a->data[i]);
 }
 void tensor_tanh_grad(const Tensor *th, const Tensor *grad, Tensor *out) {
-    assert(th->size == grad->size && th->size == out->size);
+    CF_CHECK_SHAPE(th, grad); CF_CHECK_SHAPE(th, out);
     for (size_t i = 0; i < th->size; i++) {
         float t = th->data[i];
         out->data[i] = grad->data[i] * (1.0f - t*t);
@@ -254,7 +254,7 @@ void tensor_tanh_grad(const Tensor *th, const Tensor *grad, Tensor *out) {
 }
 /* row-wise softmax for 2-D [batch, classes] */
 void tensor_softmax(const Tensor *a, Tensor *out) {
-    assert(a->size == out->size);
+    CF_CHECK_SHAPE(a, out);
     int rows = (a->ndim >= 2) ? a->shape[0] : 1;
     int cols = (int)(a->size / rows);
     for (int r = 0; r < rows; r++) {
@@ -272,7 +272,7 @@ void tensor_softmax(const Tensor *a, Tensor *out) {
 
 Tensor *tensor_reshape(Tensor *t, const int *new_shape, int new_ndim) {
     size_t new_size = shape_size(new_shape, new_ndim);
-    assert(new_size == t->size);
+    CF_CHECK(new_size == t->size, "reshape: total elements must stay the same");
     Tensor *r = (Tensor *)malloc(sizeof(Tensor));
     if (!r) return NULL;
     r->data      = t->data;
@@ -288,7 +288,7 @@ void tensor_fill(Tensor *t, float val) {
 }
 
 void tensor_copy_data(Tensor *dst, const Tensor *src) {
-    assert(dst->size == src->size);
+    CF_CHECK(dst->size == src->size, "copy_data: size mismatch");
     memcpy(dst->data, src->data, src->size * sizeof(float));
 }
 
@@ -323,4 +323,73 @@ int tensor_shape_equal(const Tensor *a, const Tensor *b) {
     for (int d = 0; d < a->ndim; d++)
         if (a->shape[d] != b->shape[d]) return 0;
     return 1;
+}
+
+/* ── argmax / argmin ─────────────────────────────────────────────── */
+
+int tensor_argmax(const Tensor *t) {
+    int best = 0;
+    float best_val = t->data[0];
+    for (size_t i = 1; i < t->size; i++)
+        if (t->data[i] > best_val) { best_val = t->data[i]; best = (int)i; }
+    return best;
+}
+
+int tensor_argmin(const Tensor *t) {
+    int best = 0;
+    float best_val = t->data[0];
+    for (size_t i = 1; i < t->size; i++)
+        if (t->data[i] < best_val) { best_val = t->data[i]; best = (int)i; }
+    return best;
+}
+
+/* per-row argmax for [batch, classes] — fills caller-supplied int array */
+void tensor_argmax_rows(const Tensor *t, int *out) {
+    CF_CHECK_2D(t);
+    int rows = t->shape[0], cols = t->shape[1];
+    for (int r = 0; r < rows; r++) {
+        int   best     = 0;
+        float best_val = t->data[r * cols];
+        for (int c = 1; c < cols; c++) {
+            float v = t->data[r * cols + c];
+            if (v > best_val) { best_val = v; best = c; }
+        }
+        out[r] = best;
+    }
+}
+
+/* ── axis reductions ─────────────────────────────────────────────── */
+
+void tensor_sum_axis(const Tensor *t, int axis, Tensor *out) {
+    CF_CHECK_2D(t);
+    int rows = t->shape[0], cols = t->shape[1];
+    tensor_fill(out, 0.0f);
+    if (axis == 0) {
+        /* sum across rows → out shape [1, cols] */
+        CF_CHECK(out->size == (size_t)cols,
+                 "sum_axis(0): out must have size == cols");
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+                out->data[c] += t->data[r * cols + c];
+    } else {
+        /* sum across cols → out shape [rows, 1] */
+        CF_CHECK(out->size == (size_t)rows,
+                 "sum_axis(1): out must have size == rows");
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+                out->data[r] += t->data[r * cols + c];
+    }
+}
+
+void tensor_mean_axis(const Tensor *t, int axis, Tensor *out) {
+    tensor_sum_axis(t, axis, out);
+    float div = (axis == 0) ? (float)t->shape[0] : (float)t->shape[1];
+    tensor_scale(out, 1.0f / div, out);
+}
+
+/* ── error handler ───────────────────────────────────────────────── */
+
+void cforge_error(const char *msg, const char *file, int line) {
+    fprintf(stderr, "\n[cforge ERROR] %s\n  at %s:%d\n", msg, file, line);
+    exit(1);
 }
