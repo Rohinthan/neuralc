@@ -1,0 +1,146 @@
+#include "optimizer.h"
+#include <stdlib.h>
+#include <math.h>
+#include <assert.h>
+#include <string.h>
+
+/* ── helpers ─────────────────────────────────────────────────────── */
+
+static Tensor *zeros_like(const Tensor *t) {
+    return tensor_zeros(t->shape, t->ndim);
+}
+
+/* ── SGD ─────────────────────────────────────────────────────────── */
+
+SGD *sgd_create(float lr, float momentum, float weight_decay) {
+    SGD *opt = (SGD *)calloc(1, sizeof(SGD));
+    opt->lr           = lr;
+    opt->momentum     = momentum;
+    opt->weight_decay = weight_decay;
+    return opt;
+}
+
+static void sgd_init(SGD *opt, Network *net) {
+    for (int i = 0; i < net->num_layers; i++) {
+        opt->vW[i] = zeros_like(net->layers[i]->W);
+        opt->vb[i] = zeros_like(net->layers[i]->b);
+    }
+    opt->initialized = 1;
+}
+
+void sgd_step(SGD *opt, Network *net) {
+    if (!opt->initialized) sgd_init(opt, net);
+
+    for (int i = 0; i < net->num_layers; i++) {
+        DenseLayer *l = net->layers[i];
+        size_t nW = l->W->size;
+        size_t nb = l->b->size;
+
+        /* W update */
+        for (size_t k = 0; k < nW; k++) {
+            float g = l->dW->data[k] + opt->weight_decay * l->W->data[k];
+            opt->vW[i]->data[k] = opt->momentum * opt->vW[i]->data[k]
+                                   + (1.0f - opt->momentum) * g;
+            l->W->data[k] -= opt->lr * opt->vW[i]->data[k];
+        }
+        /* b update (no weight decay on bias) */
+        for (size_t k = 0; k < nb; k++) {
+            float g = l->db->data[k];
+            opt->vb[i]->data[k] = opt->momentum * opt->vb[i]->data[k]
+                                   + (1.0f - opt->momentum) * g;
+            l->b->data[k] -= opt->lr * opt->vb[i]->data[k];
+        }
+    }
+}
+
+void sgd_free(SGD *opt) {
+    if (!opt) return;
+    for (int i = 0; i < NN_MAX_LAYERS; i++) {
+        tensor_free(opt->vW[i]);
+        tensor_free(opt->vb[i]);
+    }
+    free(opt);
+}
+
+/* ── Adam ────────────────────────────────────────────────────────── */
+
+Adam *adam_create(float lr, float beta1, float beta2, float eps,
+                  float weight_decay) {
+    Adam *opt = (Adam *)calloc(1, sizeof(Adam));
+    opt->lr           = lr;
+    opt->beta1        = beta1;
+    opt->beta2        = beta2;
+    opt->eps          = eps;
+    opt->weight_decay = weight_decay;
+    opt->t            = 0;
+    return opt;
+}
+
+static void adam_init(Adam *opt, Network *net) {
+    for (int i = 0; i < net->num_layers; i++) {
+        opt->mW[i] = zeros_like(net->layers[i]->W);
+        opt->vW[i] = zeros_like(net->layers[i]->W);
+        opt->mb[i] = zeros_like(net->layers[i]->b);
+        opt->vb[i] = zeros_like(net->layers[i]->b);
+    }
+    opt->initialized = 1;
+}
+
+void adam_step(Adam *opt, Network *net) {
+    if (!opt->initialized) adam_init(opt, net);
+    opt->t++;
+
+    float b1  = opt->beta1, b2  = opt->beta2;
+    float eps = opt->eps,   wd  = opt->weight_decay;
+    float lr  = opt->lr;
+    int   t   = opt->t;
+
+    /* bias-corrected lr */
+    float lr_t = lr * sqrtf(1.0f - powf(b2, t)) / (1.0f - powf(b1, t));
+
+    for (int i = 0; i < net->num_layers; i++) {
+        DenseLayer *l = net->layers[i];
+
+        /* weights */
+        size_t nW = l->W->size;
+        for (size_t k = 0; k < nW; k++) {
+            float g = l->dW->data[k] + wd * l->W->data[k];
+            opt->mW[i]->data[k] = b1 * opt->mW[i]->data[k] + (1.0f-b1) * g;
+            opt->vW[i]->data[k] = b2 * opt->vW[i]->data[k] + (1.0f-b2) * g*g;
+            l->W->data[k] -= lr_t * opt->mW[i]->data[k]
+                             / (sqrtf(opt->vW[i]->data[k]) + eps);
+        }
+
+        /* biases */
+        size_t nb = l->b->size;
+        for (size_t k = 0; k < nb; k++) {
+            float g = l->db->data[k];
+            opt->mb[i]->data[k] = b1 * opt->mb[i]->data[k] + (1.0f-b1) * g;
+            opt->vb[i]->data[k] = b2 * opt->vb[i]->data[k] + (1.0f-b2) * g*g;
+            l->b->data[k] -= lr_t * opt->mb[i]->data[k]
+                             / (sqrtf(opt->vb[i]->data[k]) + eps);
+        }
+    }
+}
+
+void adam_free(Adam *opt) {
+    if (!opt) return;
+    for (int i = 0; i < NN_MAX_LAYERS; i++) {
+        tensor_free(opt->mW[i]); tensor_free(opt->vW[i]);
+        tensor_free(opt->mb[i]); tensor_free(opt->vb[i]);
+    }
+    free(opt);
+}
+
+/* ── LR schedulers ───────────────────────────────────────────────── */
+
+void lr_step_decay(SGD *opt, int epoch, int decay_every, float decay_rate) {
+    if (epoch > 0 && epoch % decay_every == 0)
+        opt->lr *= decay_rate;
+}
+
+void lr_cosine(SGD *opt, int epoch, int total_epochs,
+               float lr_min, float lr_max) {
+    opt->lr = lr_min + 0.5f * (lr_max - lr_min) *
+              (1.0f + cosf((float)epoch / (float)total_epochs * 3.14159265f));
+}
