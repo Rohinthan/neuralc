@@ -1,0 +1,19 @@
+CC      = gcc
+CFLAGS  = -O2 -Wall -Wextra -std=c11
+LDFLAGS = -lm
+
+SRC     = tensor.c layer.c nn.c optimizer.c
+OBJ     = $(SRC:.c=.o)
+
+.PHONY: all demo clean
+
+all: demo
+
+demo: $(OBJ) demo.o
+	$(CC) $(CFLAGS) -o demo $(OBJ) demo.o $(LDFLAGS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(OBJ) demo.o demo xor_weights.bin
