@@ -54,6 +54,22 @@ float tensor_max(const Tensor *t);
 float tensor_min(const Tensor *t);
 float tensor_norm(const Tensor *t);   /* L2 norm */
 
+/* ── argmax / argmin ────────────────────────────────────────────── */
+/* tensor_argmax: index of max value across entire tensor           */
+int   tensor_argmax(const Tensor *t);
+/* tensor_argmin: index of min value across entire tensor           */
+int   tensor_argmin(const Tensor *t);
+/* tensor_argmax_rows: for 2D [batch,classes] → fills out[batch]    *
+ *  with the argmax class index for each row                        */
+void  tensor_argmax_rows(const Tensor *t, int *out);
+
+/* ── axis reductions ────────────────────────────────────────────── */
+/* tensor_sum_axis: sum along axis for 2D tensors                   *
+ *   axis=0 → sum rows    → out shape [1, cols]                     *
+ *   axis=1 → sum cols    → out shape [rows, 1]                     */
+void  tensor_sum_axis(const Tensor *t, int axis, Tensor *out);
+void  tensor_mean_axis(const Tensor *t, int axis, Tensor *out);
+
 /* ── matrix ops (2-D tensors) ──────────────────────────────────── */
 void tensor_matmul(const Tensor *a, const Tensor *b, Tensor *out);
 void tensor_transpose(const Tensor *a, Tensor *out);  /* 2-D only   */
@@ -75,5 +91,25 @@ void    tensor_copy_data(Tensor *dst, const Tensor *src);
 /* ── utilities ──────────────────────────────────────────────────── */
 void tensor_print(const Tensor *t, const char *name);
 int  tensor_shape_equal(const Tensor *a, const Tensor *b);
+
+/* ── error handling (replaces raw assert) ───────────────────────── */
+/* cforge_error: print message + file/line, then exit(1)            */
+void cforge_error(const char *msg, const char *file, int line);
+
+#define CF_CHECK(cond, msg) \
+    do { if (!(cond)) cforge_error((msg), __FILE__, __LINE__); } while(0)
+
+/* CF_CHECK_SHAPE: assert two tensors have matching sizes           */
+#define CF_CHECK_SHAPE(a, b) \
+    CF_CHECK((a)->size == (b)->size, \
+             "Shape mismatch: tensors must have the same size")
+
+/* CF_CHECK_2D: assert tensor is 2-dimensional                      */
+#define CF_CHECK_2D(t) \
+    CF_CHECK((t)->ndim == 2, "Expected a 2D tensor")
+
+/* CF_CHECK_ALLOC: assert a malloc/create call succeeded            */
+#define CF_CHECK_ALLOC(ptr) \
+    CF_CHECK((ptr) != NULL, "Memory allocation failed")
 
 #endif /* TENSOR_H */
