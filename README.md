@@ -1,5 +1,6 @@
-# neuralc
+NeuralC is a C-based neural network library inspired by modern deep learning frameworks like PyTorch and TensorFlow.
 
-its just my idea just like a python is widly used to develop ai in with the specific libraries like pytorch and tensorflow to develop ai neural , but the libraires are builded by c/c++ .
+While Python is widely used for AI development, most high-performance libraries are implemented in C/C++ under the hood. This project explores the idea of building a neural network library directly in C to achieve better performance, lower-level hardware interaction, and a deeper understanding of how deep learning systems work internally.
 
-so my thought c as faster in low level so make the libraries are faster to intract with the hardware , so that i got this idea to develop the c based fully working neural networking library , its just my idea so  asked to ai to build the first version of that . 
+This project started as an experimental idea and the first version was developed with the help of AI-assisted coding tools. The goal is to evolve it into a fully functional and efficient neural network framework.
+
