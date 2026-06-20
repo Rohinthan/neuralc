@@ -144,3 +144,58 @@ void lr_cosine(SGD *opt, int epoch, int total_epochs,
     opt->lr = lr_min + 0.5f * (lr_max - lr_min) *
               (1.0f + cosf((float)epoch / (float)total_epochs * 3.14159265f));
 }
+
+/* ── RMSProp ─────────────────────────────────────────────────────── */
+
+RMSProp *rmsprop_create(float lr, float rho, float eps, float weight_decay) {
+    RMSProp *opt = (RMSProp *)calloc(1, sizeof(RMSProp));
+    opt->lr           = lr;
+    opt->rho          = rho;
+    opt->eps          = eps;
+    opt->weight_decay = weight_decay;
+    return opt;
+}
+
+static void rmsprop_init(RMSProp *opt, Network *net) {
+    for (int i = 0; i < net->num_layers; i++) {
+        opt->vW[i] = zeros_like(net->layers[i]->W);
+        opt->vb[i] = zeros_like(net->layers[i]->b);
+    }
+    opt->initialized = 1;
+}
+
+void rmsprop_step(RMSProp *opt, Network *net) {
+    if (!opt->initialized) rmsprop_init(opt, net);
+
+    float rho = opt->rho, eps = opt->eps;
+    float lr  = opt->lr,  wd  = opt->weight_decay;
+
+    for (int i = 0; i < net->num_layers; i++) {
+        DenseLayer *l = net->layers[i];
+
+        /* weights */
+        for (size_t k = 0; k < l->W->size; k++) {
+            float g = l->dW->data[k] + wd * l->W->data[k];
+            opt->vW[i]->data[k] = rho * opt->vW[i]->data[k]
+                                   + (1.0f - rho) * g * g;
+            l->W->data[k] -= lr * g / (sqrtf(opt->vW[i]->data[k]) + eps);
+        }
+
+        /* biases */
+        for (size_t k = 0; k < l->b->size; k++) {
+            float g = l->db->data[k];
+            opt->vb[i]->data[k] = rho * opt->vb[i]->data[k]
+                                   + (1.0f - rho) * g * g;
+            l->b->data[k] -= lr * g / (sqrtf(opt->vb[i]->data[k]) + eps);
+        }
+    }
+}
+
+void rmsprop_free(RMSProp *opt) {
+    if (!opt) return;
+    for (int i = 0; i < NN_MAX_LAYERS; i++) {
+        tensor_free(opt->vW[i]);
+        tensor_free(opt->vb[i]);
+    }
+    free(opt);
+}
