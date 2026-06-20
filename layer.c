@@ -52,7 +52,6 @@ void dense_init_weights(DenseLayer *l) {
     else
         scale = sqrtf(1.0f / l->in_features);           /* Xavier */
 
-    size_t n = l->W->size;
     /* use tensor_randn then scale */
     int sh[2] = {l->out_features, l->in_features};
     Tensor *tmp = tensor_randn(sh, 2);
