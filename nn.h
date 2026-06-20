@@ -64,6 +64,23 @@ float nn_train_step(Network *net, const Tensor *input, const Tensor *target,
 void nn_print_summary(const Network *net);
 int  nn_total_params(const Network *net);
 
+/* ── metrics ────────────────────────────────────────────────────── */
+/*
+ * nn_accuracy_binary:
+ *   pred   [batch, 1]  sigmoid output (threshold 0.5)
+ *   target [batch, 1]  ground truth 0 or 1
+ *   Returns fraction correct in [0.0, 1.0]
+ */
+float nn_accuracy_binary(const Tensor *pred, const Tensor *target);
+
+/*
+ * nn_accuracy_multiclass:
+ *   pred   [batch, classes]  softmax output
+ *   target [batch, classes]  one-hot ground truth
+ *   Returns fraction correct in [0.0, 1.0]
+ */
+float nn_accuracy_multiclass(const Tensor *pred, const Tensor *target);
+
 /* ── weight I/O ─────────────────────────────────────────────────── */
 int  nn_save(const Network *net, const char *path);
 int  nn_load(Network *net, const char *path);
