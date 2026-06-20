@@ -49,10 +49,10 @@ for (int epoch = 0; epoch < 5000; epoch++) {
 
 ```
 .
-├── nn.c / nn.h          # Network management
+├── nn.c / nn.h          # neural network
 ├── layer.c / layer.h    # Layer implementations
 ├── optimizer.c / .h     # Optimizers (SGD, Adam)
-├── loss.c / loss.h      # Loss functions
+├── loss.c / loss.h      # Loss functions=!
 ├── demo.c               # Example training (XOR)
 ```
 
