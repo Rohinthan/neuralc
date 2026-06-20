@@ -1,0 +1,326 @@
+#include "tensor.h"
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <stdio.h>
+#include <assert.h>
+#include <time.h>
+
+/* ── helpers ─────────────────────────────────────────────────────── */
+
+static size_t shape_size(const int *shape, int ndim) {
+    size_t n = 1;
+    for (int i = 0; i < ndim; i++) n *= (size_t)shape[i];
+    return n;
+}
+
+/* Box-Muller: standard normal sample */
+static float randn_sample(void) {
+    static int   has_spare = 0;
+    static float spare;
+    if (has_spare) { has_spare = 0; return spare; }
+    float u, v, s;
+    do {
+        u = (float)rand() / RAND_MAX * 2.0f - 1.0f;
+        v = (float)rand() / RAND_MAX * 2.0f - 1.0f;
+        s = u*u + v*v;
+    } while (s >= 1.0f || s == 0.0f);
+    float mul = sqrtf(-2.0f * logf(s) / s);
+    spare = v * mul;
+    has_spare = 1;
+    return u * mul;
+}
+
+/* ── lifecycle ───────────────────────────────────────────────────── */
+
+Tensor *tensor_create(const int *shape, int ndim) {
+    assert(ndim > 0 && ndim <= TENSOR_MAX_DIMS);
+    Tensor *t = (Tensor *)malloc(sizeof(Tensor));
+    if (!t) return NULL;
+    t->ndim = ndim;
+    t->size = shape_size(shape, ndim);
+    memcpy(t->shape, shape, ndim * sizeof(int));
+    t->data = (float *)malloc(t->size * sizeof(float));
+    t->owns_data = 1;
+    if (!t->data) { free(t); return NULL; }
+    return t;
+}
+
+Tensor *tensor_zeros(const int *shape, int ndim) {
+    Tensor *t = tensor_create(shape, ndim);
+    if (t) memset(t->data, 0, t->size * sizeof(float));
+    return t;
+}
+
+Tensor *tensor_ones(const int *shape, int ndim) {
+    Tensor *t = tensor_create(shape, ndim);
+    if (!t) return NULL;
+    for (size_t i = 0; i < t->size; i++) t->data[i] = 1.0f;
+    return t;
+}
+
+Tensor *tensor_rand(const int *shape, int ndim) {
+    static int seeded = 0;
+    if (!seeded) { srand((unsigned)time(NULL)); seeded = 1; }
+    Tensor *t = tensor_create(shape, ndim);
+    if (!t) return NULL;
+    for (size_t i = 0; i < t->size; i++)
+        t->data[i] = (float)rand() / RAND_MAX;
+    return t;
+}
+
+Tensor *tensor_randn(const int *shape, int ndim) {
+    static int seeded = 0;
+    if (!seeded) { srand((unsigned)time(NULL)); seeded = 1; }
+    Tensor *t = tensor_create(shape, ndim);
+    if (!t) return NULL;
+    for (size_t i = 0; i < t->size; i++)
+        t->data[i] = randn_sample();
+    return t;
+}
+
+Tensor *tensor_clone(const Tensor *t) {
+    Tensor *c = tensor_create(t->shape, t->ndim);
+    if (c) memcpy(c->data, t->data, t->size * sizeof(float));
+    return c;
+}
+
+void tensor_free(Tensor *t) {
+    if (!t) return;
+    if (t->owns_data) free(t->data);
+    free(t);
+}
+
+/* ── element access ──────────────────────────────────────────────── */
+
+float tensor_get(const Tensor *t, const int *idx) {
+    size_t off = 0, stride = 1;
+    for (int d = t->ndim - 1; d >= 0; d--) {
+        off    += idx[d] * stride;
+        stride *= t->shape[d];
+    }
+    return t->data[off];
+}
+
+void tensor_set(Tensor *t, const int *idx, float val) {
+    size_t off = 0, stride = 1;
+    for (int d = t->ndim - 1; d >= 0; d--) {
+        off    += idx[d] * stride;
+        stride *= t->shape[d];
+    }
+    t->data[off] = val;
+}
+
+/* ── element-wise ops ────────────────────────────────────────────── */
+
+#define ELWISE2(name, expr)                                         \
+void name(const Tensor *a, const Tensor *b, Tensor *out) {         \
+    assert(a->size == b->size && a->size == out->size);             \
+    for (size_t i = 0; i < a->size; i++)                           \
+        out->data[i] = (expr);                                      \
+}
+
+ELWISE2(tensor_add, a->data[i] + b->data[i])
+ELWISE2(tensor_sub, a->data[i] - b->data[i])
+ELWISE2(tensor_mul, a->data[i] * b->data[i])
+ELWISE2(tensor_div, a->data[i] / b->data[i])
+
+void tensor_scale(const Tensor *a, float s, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++) out->data[i] = a->data[i] * s;
+}
+void tensor_add_scalar(const Tensor *a, float s, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++) out->data[i] = a->data[i] + s;
+}
+void tensor_neg(const Tensor *a, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++) out->data[i] = -a->data[i];
+}
+void tensor_abs(const Tensor *a, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++) out->data[i] = fabsf(a->data[i]);
+}
+void tensor_square(const Tensor *a, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++) out->data[i] = a->data[i] * a->data[i];
+}
+void tensor_sqrt_t(const Tensor *a, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++) out->data[i] = sqrtf(a->data[i]);
+}
+void tensor_exp(const Tensor *a, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++) out->data[i] = expf(a->data[i]);
+}
+void tensor_log_t(const Tensor *a, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++) out->data[i] = logf(a->data[i]);
+}
+void tensor_clip(const Tensor *a, float lo, float hi, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++) {
+        float v = a->data[i];
+        out->data[i] = v < lo ? lo : (v > hi ? hi : v);
+    }
+}
+
+/* ── reductions ──────────────────────────────────────────────────── */
+
+float tensor_sum(const Tensor *t) {
+    float s = 0.0f;
+    for (size_t i = 0; i < t->size; i++) s += t->data[i];
+    return s;
+}
+float tensor_mean(const Tensor *t) { return tensor_sum(t) / (float)t->size; }
+float tensor_max(const Tensor *t) {
+    float m = t->data[0];
+    for (size_t i = 1; i < t->size; i++) if (t->data[i] > m) m = t->data[i];
+    return m;
+}
+float tensor_min(const Tensor *t) {
+    float m = t->data[0];
+    for (size_t i = 1; i < t->size; i++) if (t->data[i] < m) m = t->data[i];
+    return m;
+}
+float tensor_norm(const Tensor *t) {
+    float s = 0.0f;
+    for (size_t i = 0; i < t->size; i++) s += t->data[i] * t->data[i];
+    return sqrtf(s);
+}
+
+/* ── matrix ops ──────────────────────────────────────────────────── */
+
+void tensor_matmul(const Tensor *a, const Tensor *b, Tensor *out) {
+    /* a: [M,K]  b: [K,N]  out: [M,N] */
+    assert(a->ndim == 2 && b->ndim == 2 && out->ndim == 2);
+    int M = a->shape[0], K = a->shape[1];
+    int K2 = b->shape[0], N = b->shape[1];
+    assert(K == K2);
+    assert(out->shape[0] == M && out->shape[1] == N);
+    memset(out->data, 0, out->size * sizeof(float));
+    for (int i = 0; i < M; i++)
+        for (int k = 0; k < K; k++) {
+            float aik = a->data[i*K + k];
+            for (int j = 0; j < N; j++)
+                out->data[i*N + j] += aik * b->data[k*N + j];
+        }
+}
+
+void tensor_transpose(const Tensor *a, Tensor *out) {
+    assert(a->ndim == 2 && out->ndim == 2);
+    int R = a->shape[0], C = a->shape[1];
+    assert(out->shape[0] == C && out->shape[1] == R);
+    for (int i = 0; i < R; i++)
+        for (int j = 0; j < C; j++)
+            out->data[j*R + i] = a->data[i*C + j];
+}
+
+/* ── activations ─────────────────────────────────────────────────── */
+
+void tensor_relu(const Tensor *a, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++)
+        out->data[i] = a->data[i] > 0.0f ? a->data[i] : 0.0f;
+}
+void tensor_relu_grad(const Tensor *a, const Tensor *grad, Tensor *out) {
+    assert(a->size == grad->size && a->size == out->size);
+    for (size_t i = 0; i < a->size; i++)
+        out->data[i] = a->data[i] > 0.0f ? grad->data[i] : 0.0f;
+}
+void tensor_sigmoid(const Tensor *a, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++)
+        out->data[i] = 1.0f / (1.0f + expf(-a->data[i]));
+}
+void tensor_sigmoid_grad(const Tensor *sig, const Tensor *grad, Tensor *out) {
+    assert(sig->size == grad->size && sig->size == out->size);
+    for (size_t i = 0; i < sig->size; i++) {
+        float s = sig->data[i];
+        out->data[i] = grad->data[i] * s * (1.0f - s);
+    }
+}
+void tensor_tanh_t(const Tensor *a, Tensor *out) {
+    assert(a->size == out->size);
+    for (size_t i = 0; i < a->size; i++)
+        out->data[i] = tanhf(a->data[i]);
+}
+void tensor_tanh_grad(const Tensor *th, const Tensor *grad, Tensor *out) {
+    assert(th->size == grad->size && th->size == out->size);
+    for (size_t i = 0; i < th->size; i++) {
+        float t = th->data[i];
+        out->data[i] = grad->data[i] * (1.0f - t*t);
+    }
+}
+/* row-wise softmax for 2-D [batch, classes] */
+void tensor_softmax(const Tensor *a, Tensor *out) {
+    assert(a->size == out->size);
+    int rows = (a->ndim >= 2) ? a->shape[0] : 1;
+    int cols = (int)(a->size / rows);
+    for (int r = 0; r < rows; r++) {
+        float *src = a->data   + r*cols;
+        float *dst = out->data + r*cols;
+        float mx = src[0];
+        for (int c = 1; c < cols; c++) if (src[c] > mx) mx = src[c];
+        float s = 0.0f;
+        for (int c = 0; c < cols; c++) { dst[c] = expf(src[c] - mx); s += dst[c]; }
+        for (int c = 0; c < cols; c++) dst[c] /= s;
+    }
+}
+
+/* ── shape ops ───────────────────────────────────────────────────── */
+
+Tensor *tensor_reshape(Tensor *t, const int *new_shape, int new_ndim) {
+    size_t new_size = shape_size(new_shape, new_ndim);
+    assert(new_size == t->size);
+    Tensor *r = (Tensor *)malloc(sizeof(Tensor));
+    if (!r) return NULL;
+    r->data      = t->data;
+    r->size      = t->size;
+    r->ndim      = new_ndim;
+    r->owns_data = 0;   /* view: does not own the data */
+    memcpy(r->shape, new_shape, new_ndim * sizeof(int));
+    return r;
+}
+
+void tensor_fill(Tensor *t, float val) {
+    for (size_t i = 0; i < t->size; i++) t->data[i] = val;
+}
+
+void tensor_copy_data(Tensor *dst, const Tensor *src) {
+    assert(dst->size == src->size);
+    memcpy(dst->data, src->data, src->size * sizeof(float));
+}
+
+/* ── utilities ───────────────────────────────────────────────────── */
+
+void tensor_print(const Tensor *t, const char *name) {
+    printf("Tensor '%s'  shape=[", name ? name : "?");
+    for (int d = 0; d < t->ndim; d++) {
+        printf("%d", t->shape[d]);
+        if (d < t->ndim-1) printf(",");
+    }
+    printf("]  size=%zu\n", t->size);
+    if (t->ndim == 1) {
+        for (size_t i = 0; i < t->size; i++) printf("  %.4f", t->data[i]);
+        printf("\n");
+    } else if (t->ndim == 2) {
+        int R = t->shape[0], C = t->shape[1];
+        for (int i = 0; i < R; i++) {
+            printf("  [");
+            for (int j = 0; j < C; j++) printf(" %8.4f", t->data[i*C+j]);
+            printf(" ]\n");
+        }
+    } else {
+        /* flat dump for higher dims */
+        for (size_t i = 0; i < t->size; i++) printf("  %.4f", t->data[i]);
+        printf("\n");
+    }
+}
+
+int tensor_shape_equal(const Tensor *a, const Tensor *b) {
+    if (a->ndim != b->ndim) return 0;
+    for (int d = 0; d < a->ndim; d++)
+        if (a->shape[d] != b->shape[d]) return 0;
+    return 1;
+}
