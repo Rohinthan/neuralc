@@ -2,7 +2,7 @@ CC      = gcc
 CFLAGS  = -O2 -Wall -Wextra -std=c11
 LDFLAGS = -lm
 
-SRC     = tensor.c layer.c nn.c optimizer.c
+SRC     = tensor.c layer.c nn.c optimizer.c dataloader.c
 OBJ     = $(SRC:.c=.o)
 
 .PHONY: all demo clean
