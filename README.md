@@ -29,10 +29,10 @@ It is **not** a copy or port of TensorFlow or PyTorch — it is an original libr
 | Adam optimizer | ✅ Done |
 | MSE / BCE / Cross-Entropy loss | ✅ Done |
 | Save & load weights | ✅ Done |
-| Convolutional layers (CNN) | ✅ Planned |
-| Batch Normalization | ✅ Planned |
+| Convolutional layers (CNN) | ✅ Done |
+| Batch Normalization | ✅ Done |
 | Dropout | ✅ Done |
-| RNN / LSTM | 🔜 Planned |
+| RNN / LSTM | 🔜 soon |
 | OpenMP multi-core support | ✅ Done |
 | Python bindings (ctypes) | ✅ Done |
 | GPU support via OpenCL | ✅ Done |
