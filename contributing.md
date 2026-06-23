@@ -160,7 +160,7 @@ If you want to take on a major feature:
 - Must be optional — CPU path must still work without OpenCL
 
 ### Python Bindings
-- Files: `python/cforge.py`
+- Files: `python/neuralc.py`
 - Use `ctypes` to wrap the C API
 - Include a Python training example
 
