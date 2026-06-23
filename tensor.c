@@ -6,6 +6,10 @@
 /* assert.h replaced by CF_CHECK */
 #include <time.h>
 
+#ifdef USE_OMP
+#include <omp.h>
+#endif
+
 /* ── helpers ─────────────────────────────────────────────────────── */
 
 static size_t shape_size(const int *shape, int ndim) {
@@ -113,11 +117,18 @@ void tensor_set(Tensor *t, const int *idx, float val) {
 
 /* ── element-wise ops ────────────────────────────────────────────── */
 
-#define ELWISE2(name, expr)                                         \
-void name(const Tensor *a, const Tensor *b, Tensor *out) {         \
-    CF_CHECK_SHAPE(a, out); CF_CHECK_SHAPE(b, out);             \
-    for (size_t i = 0; i < a->size; i++)                           \
-        out->data[i] = (expr);                                      \
+#ifdef USE_OMP
+  #define OMP_ELWISE _Pragma("omp parallel for schedule(static)")
+#else
+  #define OMP_ELWISE
+#endif
+
+#define ELWISE2(name, expr)                                              \
+void name(const Tensor *a, const Tensor *b, Tensor *out) {              \
+    CF_CHECK_SHAPE(a, out); CF_CHECK_SHAPE(b, out);                      \
+    OMP_ELWISE                                                           \
+    for (size_t i = 0; i < a->size; i++)                                 \
+        out->data[i] = (expr);                                           \
 }
 
 ELWISE2(tensor_add, a->data[i] + b->data[i])
@@ -127,38 +138,65 @@ ELWISE2(tensor_div, a->data[i] / b->data[i])
 
 void tensor_scale(const Tensor *a, float s, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+    #ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+    #endif
     for (size_t i = 0; i < a->size; i++) out->data[i] = a->data[i] * s;
 }
 void tensor_add_scalar(const Tensor *a, float s, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+    #ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+    #endif
     for (size_t i = 0; i < a->size; i++) out->data[i] = a->data[i] + s;
 }
 void tensor_neg(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+    #ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+    #endif
     for (size_t i = 0; i < a->size; i++) out->data[i] = -a->data[i];
 }
 void tensor_abs(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+    #ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+    #endif
     for (size_t i = 0; i < a->size; i++) out->data[i] = fabsf(a->data[i]);
 }
 void tensor_square(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+    #ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+    #endif
     for (size_t i = 0; i < a->size; i++) out->data[i] = a->data[i] * a->data[i];
 }
 void tensor_sqrt_t(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+    #ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+    #endif
     for (size_t i = 0; i < a->size; i++) out->data[i] = sqrtf(a->data[i]);
 }
 void tensor_exp(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+    #ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+    #endif
     for (size_t i = 0; i < a->size; i++) out->data[i] = expf(a->data[i]);
 }
 void tensor_log_t(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+    #ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+    #endif
     for (size_t i = 0; i < a->size; i++) out->data[i] = logf(a->data[i]);
 }
 void tensor_clip(const Tensor *a, float lo, float hi, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+    #ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+    #endif
     for (size_t i = 0; i < a->size; i++) {
         float v = a->data[i];
         out->data[i] = v < lo ? lo : (v > hi ? hi : v);
@@ -199,6 +237,9 @@ void tensor_matmul(const Tensor *a, const Tensor *b, Tensor *out) {
     CF_CHECK(K == K2, "matmul: inner dimensions must match (a.cols == b.rows)");
     CF_CHECK(out->shape[0]==M && out->shape[1]==N, "matmul: output shape mismatch");
     memset(out->data, 0, out->size * sizeof(float));
+    #ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(M*K*N > 8192)
+    #endif
     for (int i = 0; i < M; i++)
         for (int k = 0; k < K; k++) {
             float aik = a->data[i*K + k];
