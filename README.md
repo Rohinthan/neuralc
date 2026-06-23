@@ -33,9 +33,9 @@ It is **not** a copy or port of TensorFlow or PyTorch — it is an original libr
 | Batch Normalization | ✅ Planned |
 | Dropout | ✅ Done |
 | RNN / LSTM | 🔜 Planned |
-| OpenMP multi-core support | 🔜 Planned |
-| Python bindings (ctypes) | 🔜 Planned |
-| GPU support via OpenCL | 🔜 Planned |
+| OpenMP multi-core support | ✅ Done |
+| Python bindings (ctypes) | ✅ Done |
+| GPU support via OpenCL | ✅ Done |
 
 ---
 
