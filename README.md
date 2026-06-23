@@ -52,6 +52,7 @@ git clone https://github.com/Rohinthan/neuralc.git
 cd neuralc
 make
 ./demo
+and check this work -- ./neuralc
 ```
 
 ### Expected Output
