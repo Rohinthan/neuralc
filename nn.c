@@ -219,8 +219,13 @@ int nn_load(Network *net, const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "nn_load: cannot open '%s'\n", path); return -1; }
 
+#define FREAD_CHECK(ptr, sz, n, f) \
+    if (fread((ptr), (sz), (n), (f)) != (size_t)(n)) { \
+        fprintf(stderr, "nn_load: file read error\n"); \
+        fclose(f); return -1; }
+
     int num_layers;
-    fread(&num_layers, sizeof(int), 1, f);
+    FREAD_CHECK(&num_layers, sizeof(int), 1, f);
     if (num_layers != net->num_layers) {
         fprintf(stderr, "nn_load: layer count mismatch (%d vs %d)\n",
                 num_layers, net->num_layers);
@@ -229,16 +234,17 @@ int nn_load(Network *net, const char *path) {
     for (int i = 0; i < net->num_layers; i++) {
         DenseLayer *l = net->layers[i];
         int in_f, out_f, act;
-        fread(&in_f,  sizeof(int), 1, f);
-        fread(&out_f, sizeof(int), 1, f);
-        fread(&act,   sizeof(int), 1, f);
+        FREAD_CHECK(&in_f,  sizeof(int), 1, f);
+        FREAD_CHECK(&out_f, sizeof(int), 1, f);
+        FREAD_CHECK(&act,   sizeof(int), 1, f);
         if (in_f != l->in_features || out_f != l->out_features) {
             fprintf(stderr, "nn_load: shape mismatch at layer %d\n", i);
             fclose(f); return -1;
         }
-        fread(l->W->data, sizeof(float), l->W->size, f);
-        fread(l->b->data, sizeof(float), l->b->size, f);
+        FREAD_CHECK(l->W->data, sizeof(float), l->W->size, f);
+        FREAD_CHECK(l->b->data, sizeof(float), l->b->size, f);
     }
+#undef FREAD_CHECK
     fclose(f);
     return 0;
 }
