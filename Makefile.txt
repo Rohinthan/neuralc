@@ -6,9 +6,12 @@ SRC     = tensor.c layer.c nn.c optimizer.c dataloader.c \
           dropout.c batchnorm.c conv.c
 OBJ     = $(SRC:.c=.o)
 
-.PHONY: all demo clean
+.PHONY: all main demo clean
 
-all: demo
+all: neuralc demo
+
+neuralc: $(OBJ) main.o
+	$(CC) $(CFLAGS) -o neuralc $(OBJ) main.o $(LDFLAGS)
 
 demo: $(OBJ) demo.o
 	$(CC) $(CFLAGS) -o demo $(OBJ) demo.o $(LDFLAGS)
@@ -17,4 +20,4 @@ demo: $(OBJ) demo.o
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJ) demo.o demo xor_weights.bin
+	rm -f $(OBJ) main.o demo.o neuralc demo xor_weights.bin
