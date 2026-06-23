@@ -24,12 +24,12 @@ BatchNorm *batchnorm_create(int num_features, float eps, float momentum) {
     bn->momentum     = momentum;
     bn->training     = 1;
 
-    bn->gamma        = tensor_ones  (NULL, 0); /* init below */
+    /* gamma allocated below */
     bn->beta         = alloc1(num_features);
     bn->dgamma       = alloc1(num_features);
     bn->dbeta        = alloc1(num_features);
     bn->running_mean = alloc1(num_features);
-    bn->running_var  = tensor_ones(NULL, 0);   /* init below */
+    /* running_var allocated below */
 
     /* gamma = ones, running_var = ones */
     int sh[1] = {num_features};
