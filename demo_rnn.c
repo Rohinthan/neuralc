@@ -17,8 +17,10 @@
 #define SEQ_LEN 10
 #define BATCH    4
 #define HIDDEN  16
-#define EPOCHS  2000
-#define LR      0.003f
+#define RNN_EPOCHS  2000
+#define RNN_LR      0.003f
+#define LSTM_EPOCHS 3000
+#define LSTM_LR     0.0005f
 
 static void gen_sine(float *X, float *Y, int batch, int seq, float phase) {
     for (int b = 0; b < batch; b++)
@@ -64,7 +66,7 @@ static void demo_rnn(void) {
     printf("  RNN params:%d  Dense params:%d\n",
            rnn_param_count(rnn),dense_param_count(fc));
 
-    for (int ep = 0; ep <= EPOCHS; ep++) {
+    for (int ep = 0; ep <= RNN_EPOCHS; ep++) {
         gen_sine(Xd, Yd, BATCH, SEQ_LEN, ep*0.05f);
         memcpy(X->data, Xd, N*sizeof(float));
 
@@ -77,7 +79,7 @@ static void demo_rnn(void) {
 
         /* loss */
         float loss = mse_loss(Pred->data,Yd,Grad->data,N);
-        if (ep%200==0) printf("  Epoch %4d  loss=%.6f\n",ep,loss);
+        if (ep%400==0) printf("  Epoch %4d  loss=%.6f\n",ep,loss);
 
         /* backward — free Hf AFTER dense_backward */
         Tensor *Gf = tensor_reshape(Grad,shFP,2);
@@ -89,9 +91,9 @@ static void demo_rnn(void) {
         rnn_backward(rnn,dHs);
         tensor_free(dHs);
 
-        rnn_update_sgd(rnn,LR);
-        for (size_t i=0;i<fc->W->size;i++) fc->W->data[i]-=LR*fc->dW->data[i];
-        for (size_t i=0;i<fc->b->size;i++) fc->b->data[i]-=LR*fc->db->data[i];
+        rnn_update_sgd(rnn,RNN_LR);
+        for (size_t i=0;i<fc->W->size;i++) fc->W->data[i]-=RNN_LR*fc->dW->data[i];
+        for (size_t i=0;i<fc->b->size;i++) fc->b->data[i]-=RNN_LR*fc->db->data[i];
     }
 
     /* show predictions */
@@ -147,10 +149,10 @@ static void demo_lstm(void) {
     printf("  LSTM params:%d  Dense params:%d\n",
            lstm_param_count(lstm),dense_param_count(fc));
 
-    for (int ep = 0; ep <= EPOCHS; ep++) {
-        gen_sine(Xd,Yd,BATCH,SEQ_LEN,ep*0.05f);
-        memcpy(X->data,Xd,N*sizeof(float));
-
+    gen_sine(Xd,Yd,BATCH,SEQ_LEN,0.0f);
+    memcpy(X->data,Xd,N*sizeof(float));
+    for (int ep = 0; ep <= LSTM_EPOCHS; ep++) {
+        /* fixed dataset — stable training */
         lstm_forward(lstm,X,NULL,NULL,Hout);
         Tensor *Hf = tensor_reshape(Hout,shFH,2);
         Tensor *Pf = tensor_reshape(Pred,shFP,2);
@@ -158,7 +160,7 @@ static void demo_lstm(void) {
         tensor_free(Pf);
 
         float loss = mse_loss(Pred->data,Yd,Grad->data,N);
-        if (ep%200==0) printf("  Epoch %4d  loss=%.6f\n",ep,loss);
+        if (ep%600==0) printf("  Epoch %4d  loss=%.6f\n",ep,loss);
 
         Tensor *Gf = tensor_reshape(Grad,shFP,2);
         dense_backward(fc,Gf);
@@ -169,9 +171,10 @@ static void demo_lstm(void) {
         lstm_backward(lstm,dHs);
         tensor_free(dHs);
 
-        lstm_update_sgd(lstm,LR);
-        for (size_t i=0;i<fc->W->size;i++) fc->W->data[i]-=LR*fc->dW->data[i];
-        for (size_t i=0;i<fc->b->size;i++) fc->b->data[i]-=LR*fc->db->data[i];
+        lstm_clip_gradients(lstm, 1.0f);
+        lstm_update_sgd(lstm,LSTM_LR);
+        for (size_t i=0;i<fc->W->size;i++) fc->W->data[i]-=LSTM_LR*fc->dW->data[i];
+        for (size_t i=0;i<fc->b->size;i++) fc->b->data[i]-=LSTM_LR*fc->db->data[i];
     }
 
     gen_sine(Xd,Yd,1,SEQ_LEN,0.0f);
