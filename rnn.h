@@ -151,4 +151,8 @@ void lstm_zero_grad(LSTMLayer *l);
 void lstm_update_sgd(LSTMLayer *l, float lr);
 int  lstm_param_count(const LSTMLayer *l);
 
+/* ── gradient clipping ──────────────────────────────────────────── */
+void rnn_clip_gradients(RNNLayer *l, float max_norm);
+void lstm_clip_gradients(LSTMLayer *l, float max_norm);
+
 #endif /* RNN_H */
