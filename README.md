@@ -32,7 +32,7 @@ It is **not** a copy or port of TensorFlow or PyTorch — it is an original libr
 | Convolutional layers (CNN) | ✅ Done |
 | Batch Normalization | ✅ Done |
 | Dropout | ✅ Done |
-| RNN / LSTM | 🔜 soon |
+| RNN / LSTM | ✅ Done |
 | OpenMP multi-core support | ✅ Done |
 | Python bindings (ctypes) | ✅ Done |
 | GPU support via OpenCL | ✅ Done |
