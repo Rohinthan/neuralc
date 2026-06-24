@@ -3,12 +3,12 @@ CFLAGS  = -O2 -Wall -Wextra -std=c11
 LDFLAGS = -lm
 
 SRC     = tensor.c layer.c nn.c optimizer.c dataloader.c \
-          dropout.c batchnorm.c conv.c rnn.c
+          dropout.c batchnorm.c conv.c rnn.c mnist.c
 OBJ     = $(SRC:.c=.o)
 
-.PHONY: all demo rnn_demo clean libneuralc omp gpu
+.PHONY: all demo rnn_demo mnist_demo clean libneuralc omp gpu
 
-all: neuralc demo rnn_demo
+all: neuralc demo rnn_demo mnist_demo
 
 neuralc: $(OBJ) main.o
 	$(CC) $(CFLAGS) -o neuralc $(OBJ) main.o $(LDFLAGS)
@@ -19,9 +19,12 @@ demo: $(OBJ) demo.o
 rnn_demo: $(OBJ) demo_rnn.o
 	$(CC) $(CFLAGS) -o rnn_demo $(OBJ) demo_rnn.o $(LDFLAGS)
 
+mnist_demo: $(OBJ) demo_mnist.o
+	$(CC) $(CFLAGS) -o mnist_demo $(OBJ) demo_mnist.o $(LDFLAGS)
+
 libneuralc: $(SRC)
 	$(CC) $(CFLAGS) -fPIC -shared -o libneuralc.so $(SRC) $(LDFLAGS)
-	@echo "Built libneuralc.so — run: python3 python/neuralc.py"
+	@echo "Built libneuralc.so"
 
 omp: CFLAGS  += -DUSE_OMP -fopenmp
 omp: LDFLAGS += -fopenmp
@@ -40,6 +43,7 @@ gpu/neuralc_gpu.o: gpu/neuralc_gpu.c gpu/neuralc_gpu.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJ) main.o demo.o demo_rnn.o \
-	      neuralc demo rnn_demo libneuralc.so \
-	      xor_weights.bin gpu/neuralc_gpu.o neuralc_gpu
+	rm -f $(OBJ) main.o demo.o demo_rnn.o demo_mnist.o \
+	      neuralc demo rnn_demo mnist_demo libneuralc.so \
+	      xor_weights.bin mnist_best.bin gpu/neuralc_gpu.o \
+	      neuralc_gpu test_rnn_min
