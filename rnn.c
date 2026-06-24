@@ -545,3 +545,29 @@ void lstm_update_sgd(LSTMLayer *l, float lr) {
 int lstm_param_count(const LSTMLayer *l) {
     return (int)(l->W_ih->size + l->W_hh->size + l->b->size);
 }
+
+/* ── gradient clipping (clip by global norm) ─────────────────────── */
+
+static void clip_grads(Tensor **grads, int n, float max_norm) {
+    float total = 0.0f;
+    for (int i = 0; i < n; i++)
+        for (size_t j = 0; j < grads[i]->size; j++)
+            total += grads[i]->data[j] * grads[i]->data[j];
+    float norm = sqrtf(total);
+    if (norm > max_norm) {
+        float scale = max_norm / (norm + 1e-6f);
+        for (int i = 0; i < n; i++)
+            for (size_t j = 0; j < grads[i]->size; j++)
+                grads[i]->data[j] *= scale;
+    }
+}
+
+void lstm_clip_gradients(LSTMLayer *l, float max_norm) {
+    Tensor *gs[3] = {l->dW_ih, l->dW_hh, l->db};
+    clip_grads(gs, 3, max_norm);
+}
+
+void rnn_clip_gradients(RNNLayer *l, float max_norm) {
+    Tensor *gs[3] = {l->dW_xh, l->dW_hh, l->db_h};
+    clip_grads(gs, 3, max_norm);
+}
