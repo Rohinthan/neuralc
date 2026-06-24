@@ -35,16 +35,6 @@ static void matmul_bt(const Tensor *A, const Tensor *B, Tensor *out) {
 }
 
 /* out = A^T @ B  [M,K]^T @ [M,N] → [K,N] */
-static void matmul_at(const Tensor *A, const Tensor *B, Tensor *out) {
-    int M = A->shape[0], K = A->shape[1], N = B->shape[1];
-    tensor_fill(out, 0.0f);
-    for (int m = 0; m < M; m++)
-        for (int k = 0; k < K; k++) {
-            float a = A->data[m*K + k];
-            for (int n = 0; n < N; n++)
-                out->data[k*N + n] += a * B->data[m*N + n];
-        }
-}
 
 /* ═══════════════════════════════════════════════════════════════════
  *  VANILLA RNN
