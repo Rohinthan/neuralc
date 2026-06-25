@@ -15,7 +15,7 @@ It is **not** a copy or port of TensorFlow or PyTorch — it is an original libr
 
 ---
 
-## ✅ Proven on Real Data — 95.79% MNIST Accuracy
+##  Proven on Real Data — 95.79% MNIST Accuracy
 
 neuralc trained on 60,000 real handwritten digit images in C:
 
@@ -250,7 +250,7 @@ make clean        # remove all build files
 
 ## Contributing
 
-We welcome all contributors! See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.  
+We welcome all contributors! See [CONTRIBUTING.md](contibuting.md) to get started.  
 Good first issues are labeled `good first issue` on GitHub.
 
 ---
