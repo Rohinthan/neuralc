@@ -1,5 +1,11 @@
-# neuralc
+# neuralc 🔥
 > A fast, lightweight deep learning library written in C — no dependencies, no bloat.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Language: C](https://img.shields.io/badge/Language-C11-blue.svg)]()
+[![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
+[![MNIST: 95.79%](https://img.shields.io/badge/MNIST-95.79%25-brightgreen.svg)]()
+[![Contributors Welcome](https://img.shields.io/badge/Contributors-Welcome-brightgreen.svg)]()
 
 ---
 
@@ -8,10 +14,27 @@
 **neuralc** is an open-source neural network and tensor library written in C.  
 It is **not** a copy or port of TensorFlow or PyTorch — it is an original library built from scratch, inspired by the same ideas but designed for:
 
--  **Raw speed** — C runs close to the metal, no Python overhead
--  **Simplicity** — readable source code anyone can understand and modify
--  **Zero dependencies** — only needs a C compiler and `libm`
--  **Portability** — runs on Linux, macOS, Windows, embedded systems
+- **Raw speed** — C runs close to the metal, no Python overhead
+- **Simplicity** — readable source code anyone can understand and modify
+- **Zero dependencies** — only needs a C compiler and `libm`
+- **Portability** — runs on Linux, macOS, Windows, embedded systems
+
+---
+
+## ✅ Proven on Real Data — 95.79% MNIST Accuracy
+
+neuralc trained on 60,000 real handwritten digit images in C:
+
+```
+Epoch  1   loss=0.4148   train=87.8%   test=94.0%
+Epoch  5   loss=0.2371   train=93.4%   test=95.1%
+Epoch 14   loss=0.2296   train=93.7%   test=95.8%  ← best
+Epoch 20   loss=0.2274   train=93.7%   test=95.2%
+
+Best test accuracy: 95.79%
+```
+
+See [MNIST.md](MNIST.md) for full setup guide and contributor tasks.
 
 ---
 
@@ -27,15 +50,25 @@ It is **not** a copy or port of TensorFlow or PyTorch — it is an original libr
 | Backpropagation | ✅ Done |
 | SGD + Momentum | ✅ Done |
 | Adam optimizer | ✅ Done |
+| RMSProp optimizer | ✅ Done |
+| Gradient clipping | ✅ Done |
 | MSE / BCE / Cross-Entropy loss | ✅ Done |
 | Save & load weights | ✅ Done |
-| Convolutional layers (CNN) | ✅ Done |
-| Batch Normalization | ✅ Done |
 | Dropout | ✅ Done |
+| Batch Normalization | ✅ Done |
+| Convolutional layers (CNN) | ✅ Done |
+| MaxPool2D + Flatten | ✅ Done |
 | RNN / LSTM | ✅ Done |
+| CSV data loader | ✅ Done |
+| MNIST data loader | ✅ Done |
+| MNIST demo (95.79% accuracy) | ✅ Done |
 | OpenMP multi-core support | ✅ Done |
 | Python bindings (ctypes) | ✅ Done |
 | GPU support via OpenCL | ✅ Done |
+| GRU layer | 🔜 Planned |
+| Embedding layer (NLP) | 🔜 Planned |
+| Transformer | 🔜 Planned |
+| CIFAR-10 demo | 🔜 Planned |
 
 ---
 
@@ -45,17 +78,32 @@ It is **not** a copy or port of TensorFlow or PyTorch — it is an original libr
 - GCC or Clang (C11 or later)
 - `libm` (standard math library, included on all platforms)
 
-### Build & Run Demo
+### Build & Run
 
 ```bash
 git clone https://github.com/Rohinthan/neuralc.git
 cd neuralc
 make
-./demo
-and check this work -- ./neuralc
+./demo        # XOR training demo
+./neuralc     # full feature demo (all 7 sections)
 ```
 
-### Expected Output
+### MNIST Demo
+
+```bash
+bash mnist/download.sh    # download dataset (~60MB)
+make mnist_demo
+./mnist_demo              # trains to 95.79% accuracy
+```
+
+### RNN / LSTM Demo
+
+```bash
+make rnn_demo
+./rnn_demo                # sine wave prediction
+```
+
+### Expected Output (XOR)
 
 ```
 === Network Summary ===
@@ -95,6 +143,7 @@ Adam *opt = adam_create(0.01f, 0.9f, 0.999f, 1e-8f, 0.0f);
 // Training loop
 for (int ep = 0; ep < 5000; ep++) {
     float loss = nn_train_step(net, X, Y, LOSS_BINARY_CROSS, pred, grad);
+    nn_clip_gradients(net, 5.0f);   // prevent exploding gradients
     adam_step(opt, net);
 }
 
@@ -112,41 +161,96 @@ adam_free(opt);
 
 ```
 neuralc/
-├── tensor.h / tensor.c       # Core tensor struct + all math ops
-├── layer.h  / layer.c        # Dense layer (forward + backward)
-├── nn.h     / nn.c           # Network, loss, backprop, save/load
-├── optimizer.h / optimizer.c # SGD, Adam, LR schedulers
-├── demo.c                    # XOR training demo
+├── tensor.h / tensor.c        # Core tensor struct + all math ops
+├── layer.h  / layer.c         # Dense layer (forward + backward)
+├── nn.h     / nn.c            # Network, loss, backprop, save/load
+├── optimizer.h / optimizer.c  # SGD, Adam, RMSProp, gradient clipping
+├── dropout.h / dropout.c      # Dropout regularization
+├── batchnorm.h / batchnorm.c  # Batch Normalization
+├── conv.h / conv.c            # Conv2D, MaxPool2D, Flatten
+├── rnn.h / rnn.c              # Vanilla RNN + LSTM with BPTT
+├── dataloader.h / dataloader.c# CSV loader, shuffle, batch iterator
+├── mnist.h / mnist.c          # MNIST IDX format loader
+├── demo.c                     # XOR training demo
+├── main.c                     # Full feature demo (all 7 sections)
+├── demo_rnn.c                 # RNN + LSTM sine wave demo
+├── demo_mnist.c               # MNIST digit recognition demo
+├── python/
+│   └── neuralc.py             # Python ctypes bindings
+├── gpu/
+│   ├── neuralc_gpu.h          # OpenCL GPU API
+│   ├── neuralc_gpu.c          # OpenCL implementation
+│   └── kernels.cl             # GPU kernels (matmul, relu, sigmoid...)
+├── mnist/
+│   └── download.sh            # Download MNIST dataset
+├── MNIST.md                   # MNIST contributor guide
+├── CONTRIBUTING.md            # How to contribute
 └── Makefile
+```
+
+---
+
+## Build Targets
+
+```bash
+make              # build everything
+make mnist_demo   # MNIST digit recognition
+make rnn_demo     # RNN + LSTM demo
+make omp          # build with OpenMP multi-core
+make libneuralc   # build shared library for Python
+make gpu          # build with OpenCL GPU support
+make clean        # remove all build files
 ```
 
 ---
 
 ## Roadmap
 
-### v0.2 — Regularization & Data
-- [ ] Dropout layer
-- [ ] Batch Normalization
-- [ ] CSV data loader
+### ✅ v0.1 — Foundation (Complete)
+- [x] Tensor engine + math ops
+- [x] Dense layers + backpropagation
+- [x] SGD, Adam, RMSProp optimizers
+- [x] Gradient clipping
+- [x] Save & load weights
 
-### v0.3 — CNN Support
-- [ ] Conv2D layer
-- [ ] MaxPool2D / AvgPool2D
-- [ ] Flatten layer
-- [ ] MNIST example
+### ✅ v0.2 — Regularization & Data (Complete)
+- [x] Dropout layer
+- [x] Batch Normalization
+- [x] CSV data loader
+- [x] MNIST data loader + demo (95.79% accuracy)
 
-### v0.4 — Performance
-- [ ] OpenMP multi-core parallelism
-- [ ] BLAS integration (optional)
-- [ ] Memory pool allocator
+### ✅ v0.3 — CNN Support (Complete)
+- [x] Conv2D layer
+- [x] MaxPool2D + Flatten
+- [x] MNIST demo
 
-### v0.5 — Sequences
-- [ ] RNN layer
-- [ ] LSTM layer
+### ✅ v0.4 — Performance (Complete)
+- [x] OpenMP multi-core parallelism
+- [x] Python bindings via ctypes
+- [x] OpenCL GPU backend
 
-### v1.0 — Bindings & GPU
-- [ ] Python bindings via ctypes
-- [ ] OpenCL GPU backend
+### ✅ v0.5 — Sequences (Complete)
+- [x] Vanilla RNN layer
+- [x] LSTM layer
+- [x] Backpropagation Through Time (BPTT)
+
+### 🔜 v0.6 — More Layers
+- [ ] GRU layer
+- [ ] Embedding layer (for NLP)
+- [ ] Layer Normalization
+- [ ] 1D Convolution
+
+### 🔜 v0.7 — NLP
+- [ ] Tokenizer
+- [ ] Sentiment analysis demo
+- [ ] Text classification
+
+### 🔜 v1.0 — Full Release
+- [ ] Transformer architecture
+- [ ] CIFAR-10 demo
+- [ ] BLAS integration
+- [ ] Full documentation site
+- [ ] Test suite
 
 ---
 
