@@ -87,10 +87,15 @@ float nn_loss(LossType type, const Tensor *pred, const Tensor *target,
         break;
 
     case LOSS_CROSS_ENTROPY: {
-        /* pred is already softmax output [batch, classes]
-           target is one-hot or probability distribution
-           L = -mean(sum_c t_c * log(p_c))
-           dL/dp_c = -(t_c / p_c) / batch                 */
+        /*
+         * Softmax + Cross-Entropy combined gradient.
+         * L = -mean(sum_c t_c * log(p_c))
+         *
+         * Combined gradient: dL/dz = (p - t) / batch
+         * This is numerically stable and accounts for
+         * the softmax Jacobian automatically.
+         * Using -(t/p) alone causes exploding gradients!
+         */
         int batch   = pred->shape[0];
         int classes = (int)(N / batch);
         for (int b = 0; b < batch; b++) {
@@ -100,7 +105,8 @@ float nn_loss(LossType type, const Tensor *pred, const Tensor *target,
                 float t = target->data[b*classes + c];
                 p = p < 1e-7f ? 1e-7f : p;
                 row_loss -= t * logf(p);
-                grad->data[b*classes + c] = -(t / p) / (float)batch;
+                /* KEY FIX: combined softmax+CE gradient */
+                grad->data[b*classes + c] = (p - t) / (float)batch;
             }
             loss += row_loss;
         }
