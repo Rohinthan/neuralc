@@ -199,3 +199,31 @@ void rmsprop_free(RMSProp *opt) {
     }
     free(opt);
 }
+
+/* ── Gradient Clipping ───────────────────────────────────────────── */
+
+float nn_grad_norm(const Network *net) {
+    float total = 0.0f;
+    for (int i = 0; i < net->num_layers; i++) {
+        DenseLayer *l = net->layers[i];
+        for (size_t k = 0; k < l->dW->size; k++)
+            total += l->dW->data[k] * l->dW->data[k];
+        for (size_t k = 0; k < l->db->size; k++)
+            total += l->db->data[k] * l->db->data[k];
+    }
+    return sqrtf(total);
+}
+
+void nn_clip_gradients(Network *net, float max_norm) {
+    float norm = nn_grad_norm(net);
+    if (norm <= max_norm) return;   /* already within limit */
+
+    float scale = max_norm / (norm + 1e-6f);
+    for (int i = 0; i < net->num_layers; i++) {
+        DenseLayer *l = net->layers[i];
+        for (size_t k = 0; k < l->dW->size; k++)
+            l->dW->data[k] *= scale;
+        for (size_t k = 0; k < l->db->size; k++)
+            l->db->data[k] *= scale;
+    }
+}
