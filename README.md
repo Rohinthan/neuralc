@@ -250,7 +250,7 @@ make clean        # remove all build files
 
 ## Contributing
 
-We welcome all contributors! See [CONTRIBUTING.md](contibuting.md) to get started.  
+We welcome all contributors! See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.  
 Good first issues are labeled `good first issue` on GitHub.
 
 ---
