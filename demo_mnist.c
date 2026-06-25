@@ -5,9 +5,8 @@
  * Optimizer: Adam lr=0.001
  * Expected:  ~97% test accuracy
  *
- * Setup:
- *   bash mnist/download.sh
- *   make mnist_demo && ./mnist_demo
+ * Build:  make mnist_demo
+ * Run:    ./mnist_demo
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,49 +25,7 @@
 #define LR          0.001f
 #define DROP_RATE   0.3f
 
-/* ── forward pass with dropout ───────────────────────────────────── */
-static Tensor *forward(Network *net,
-                        DropoutLayer *d1, DropoutLayer *d2,
-                        const Tensor *X, int batch) {
-    int sh1[2]={batch,256}, sh2[2]={batch,128}, sh3[2]={batch,10};
-
-    Tensor *h1  = tensor_zeros(sh1,2);
-    Tensor *h1d = tensor_zeros(sh1,2);
-    Tensor *h2  = tensor_zeros(sh2,2);
-    Tensor *h2d = tensor_zeros(sh2,2);
-    Tensor *out = tensor_zeros(sh3,2);
-
-    dense_forward(net->layers[0], X,   h1);
-    dropout_forward(d1, h1, h1d);
-    dense_forward(net->layers[1], h1d, h2);
-    dropout_forward(d2, h2, h2d);
-    dense_forward(net->layers[2], h2d, out);
-
-    tensor_free(h1); tensor_free(h1d);
-    tensor_free(h2); tensor_free(h2d);
-    return out;  /* caller must free */
-}
-
-/* ── backward pass ───────────────────────────────────────────────── */
-static void backward(Network *net,
-                      DropoutLayer *d1, DropoutLayer *d2,
-                      Tensor *grad_out, int batch) {
-    int sh1[2]={batch,256}, sh2[2]={batch,128};
-
-    dense_backward(net->layers[2], grad_out);
-
-    Tensor *dh2 = tensor_zeros(sh2,2);
-    dropout_backward(d2, net->layers[2]->dX, dh2);
-    dense_backward(net->layers[1], dh2);
-    tensor_free(dh2);
-
-    Tensor *dh1 = tensor_zeros(sh1,2);
-    dropout_backward(d1, net->layers[1]->dX, dh1);
-    dense_backward(net->layers[0], dh1);
-    tensor_free(dh1);
-}
-
-/* ── evaluate accuracy ───────────────────────────────────────────── */
+/* ── evaluate accuracy (no backward needed — safe to free early) ─── */
 static float evaluate(Network *net,
                        DropoutLayer *d1, DropoutLayer *d2,
                        MNISTData *data) {
@@ -80,11 +37,23 @@ static float evaluate(Network *net,
         if (s + actual > data->n) actual = data->n - s;
 
         int shX[2]={actual,784}, shY[2]={actual,10};
-        Tensor *X = tensor_zeros(shX,2);
-        Tensor *Y = tensor_zeros(shY,2);
+        int sh1[2]={actual,256}, sh2[2]={actual,128};
+
+        Tensor *X   = tensor_zeros(shX,2);
+        Tensor *Y   = tensor_zeros(shY,2);
+        Tensor *h1  = tensor_zeros(sh1,2);
+        Tensor *h1d = tensor_zeros(sh1,2);
+        Tensor *h2  = tensor_zeros(sh2,2);
+        Tensor *h2d = tensor_zeros(sh2,2);
+        Tensor *out = tensor_zeros(shY,2);
+
         mnist_get_batch(data, s, actual, X, Y);
 
-        Tensor *out = forward(net, d1, d2, X, actual);
+        dense_forward(net->layers[0], X,   h1);
+        dropout_forward(d1, h1, h1d);
+        dense_forward(net->layers[1], h1d, h2);
+        dropout_forward(d2, h2, h2d);
+        dense_forward(net->layers[2], h2d, out);
 
         int preds[BATCH_SIZE], trues[BATCH_SIZE];
         tensor_argmax_rows(out, preds);
@@ -92,7 +61,11 @@ static float evaluate(Network *net,
         for (int i=0;i<actual;i++)
             if (preds[i]==trues[i]) correct++;
 
-        tensor_free(X); tensor_free(Y); tensor_free(out);
+        /* safe to free all here — no backward needed */
+        tensor_free(X);  tensor_free(Y);
+        tensor_free(h1); tensor_free(h1d);
+        tensor_free(h2); tensor_free(h2d);
+        tensor_free(out);
     }
     return (float)correct / data->n * 100.0f;
 }
@@ -108,6 +81,7 @@ int main(void) {
     /* load data */
     printf("Loading MNIST...\n");
     clock_t t0 = clock();
+
     MNISTData *train = mnist_load(
         "mnist/train-images-idx3-ubyte",
         "mnist/train-labels-idx1-ubyte", 0);
@@ -123,20 +97,19 @@ int main(void) {
     mnist_print_info(train, "train");
     mnist_print_info(test,  "test");
 
-    /* show sample digit */
     printf("\nSample digit:\n");
-    mnist_print_sample(train, 7);
+    mnist_print_sample(train, 0);
 
     /* build network */
     printf("\nBuilding network...\n");
-    Network    *net  = nn_create();
+    Network *net = nn_create();
     nn_add_layer(net, dense_create(784, 256, ACT_RELU));
     nn_add_layer(net, dense_create(256, 128, ACT_RELU));
     nn_add_layer(net, dense_create(128,  10, ACT_SOFTMAX));
     nn_print_summary(net);
 
-    DropoutLayer *d1 = dropout_create(DROP_RATE);
-    DropoutLayer *d2 = dropout_create(DROP_RATE);
+    DropoutLayer *d1  = dropout_create(DROP_RATE);
+    DropoutLayer *d2  = dropout_create(DROP_RATE);
     Adam         *opt = adam_create(LR, 0.9f, 0.999f, 1e-8f, 1e-4f);
 
     int n_batches = (train->n + BATCH_SIZE - 1) / BATCH_SIZE;
@@ -147,7 +120,6 @@ int main(void) {
 
     float best_acc = 0.0f;
 
-    /* training loop */
     for (int ep = 1; ep <= EPOCHS; ep++) {
         clock_t ep_t = clock();
         mnist_shuffle(train);
@@ -161,36 +133,65 @@ int main(void) {
             int actual = BATCH_SIZE;
             if (start + actual > train->n) actual = train->n - start;
 
-            /* allocate batch tensors — all same size = actual */
+            /* ── allocate all tensors for this batch ── */
             int shX[2]={actual,784}, shY[2]={actual,10};
+            int sh1[2]={actual,256}, sh2[2]={actual,128};
+
             Tensor *X    = tensor_zeros(shX,2);
             Tensor *Y    = tensor_zeros(shY,2);
+            Tensor *h1   = tensor_zeros(sh1,2);
+            Tensor *h1d  = tensor_zeros(sh1,2);
+            Tensor *h2   = tensor_zeros(sh2,2);
+            Tensor *h2d  = tensor_zeros(sh2,2);
+            Tensor *out  = tensor_zeros(shY,2);
             Tensor *grad = tensor_zeros(shY,2);
 
             mnist_get_batch(train, start, actual, X, Y);
 
-            /* forward */
-            Tensor *out = forward(net, d1, d2, X, actual);
+            /* ── FORWARD ──
+             * Keep h1d and h2d alive! dense layers cache
+             * their input pointer — needed in backward.   */
+            dense_forward(net->layers[0], X,   h1);
+            dropout_forward(d1, h1, h1d);
+            dense_forward(net->layers[1], h1d, h2);
+            dropout_forward(d2, h2, h2d);
+            dense_forward(net->layers[2], h2d, out);
 
-            /* loss — all tensors are [actual,10] → no size mismatch */
+            /* ── LOSS ── */
             float loss = nn_loss(LOSS_CROSS_ENTROPY, out, Y, grad);
             total_loss += loss;
 
-            /* accuracy */
             int preds[BATCH_SIZE], trues[BATCH_SIZE];
             tensor_argmax_rows(out, preds);
             tensor_argmax_rows(Y,   trues);
             for (int i=0;i<actual;i++)
                 if (preds[i]==trues[i]) correct++;
 
-            /* backward + update */
-            backward(net, d1, d2, grad, actual);
+            /* ── BACKWARD ──
+             * h1d, h2d still alive here — safe to backprop */
+            dense_backward(net->layers[2], grad);
+
+            Tensor *dh2 = tensor_zeros(sh2,2);
+            dropout_backward(d2, net->layers[2]->dX, dh2);
+            dense_backward(net->layers[1], dh2);
+            tensor_free(dh2);
+
+            Tensor *dh1 = tensor_zeros(sh1,2);
+            dropout_backward(d1, net->layers[1]->dX, dh1);
+            dense_backward(net->layers[0], dh1);
+            tensor_free(dh1);
+
+            /* ── UPDATE ── */
             adam_step(opt, net);
 
-            tensor_free(X); tensor_free(Y);
+            /* ── FREE — safe now that backward is done ── */
+            tensor_free(X);   tensor_free(Y);
+            tensor_free(h1);  tensor_free(h1d);
+            tensor_free(h2);  tensor_free(h2d);
             tensor_free(out); tensor_free(grad);
         }
 
+        /* ── evaluate ── */
         float train_loss = total_loss / n_batches;
         float train_acc  = (float)correct / train->n * 100.0f;
         float test_acc   = evaluate(net, d1, d2, test);
@@ -201,31 +202,51 @@ int main(void) {
             nn_save(net, "mnist_best.bin");
         }
 
-        printf("  %-6d %-12.4f %-12.1f%% %-10.1f%% %.1fs\n",
+        dropout_train(d1); dropout_train(d2);
+
+        printf("  %-6d %-12.4f %-11.1f%% %-9.1f%% %.1fs\n",
                ep, train_loss, train_acc, test_acc, ep_sec);
     }
 
-    /* final results */
+    /* ── results ── */
     printf("\n  Best test accuracy: %.2f%%\n", best_acc);
-    printf("  Model saved: mnist_best.bin\n");
+    printf("  Model saved → mnist_best.bin\n");
 
-    /* sample predictions */
-    printf("\n  Sample Predictions (test set):\n");
+    /* ── sample predictions ── */
+    printf("\n  Sample Predictions:\n");
     printf("  %-6s %-10s %-10s\n","Index","Predicted","Actual");
     dropout_eval(d1); dropout_eval(d2);
+
     for (int i = 0; i < 10; i++) {
-        int shx[2]={1,784};
-        Tensor *xi = tensor_zeros(shx,2);
+        int shx[2]={1,784}, shy[2]={1,10};
+        int sha[2]={1,256},  shb[2]={1,128};
+
+        Tensor *xi  = tensor_zeros(shx,2);
+        Tensor *ha  = tensor_zeros(sha,2);
+        Tensor *had = tensor_zeros(sha,2);
+        Tensor *hb  = tensor_zeros(shb,2);
+        Tensor *hbd = tensor_zeros(shb,2);
+        Tensor *pi  = tensor_zeros(shy,2);
+
         memcpy(xi->data, test->images->data + i*784, 784*sizeof(float));
-        Tensor *pi = forward(net, d1, d2, xi, 1);
+
+        dense_forward(net->layers[0], xi,  ha);
+        dropout_forward(d1, ha, had);
+        dense_forward(net->layers[1], had, hb);
+        dropout_forward(d2, hb, hbd);
+        dense_forward(net->layers[2], hbd, pi);
+
         int pred   = tensor_argmax(pi);
         int actual = (int)test->labels_raw->data[i];
         printf("  %-6d %-10d %-10d %s\n",
-               i, pred, actual, pred==actual ? "✓" : "✗");
-        tensor_free(xi); tensor_free(pi);
+               i, pred, actual, pred==actual?"✓":"✗");
+
+        tensor_free(xi);  tensor_free(ha);
+        tensor_free(had); tensor_free(hb);
+        tensor_free(hbd); tensor_free(pi);
     }
 
-    printf("\n✓ MNIST complete! neuralc trained on 60,000 real images.\n\n");
+    printf("\n✓ neuralc trained on 60,000 real images in pure C!\n\n");
 
     dropout_free(d1); dropout_free(d2);
     adam_free(opt);
