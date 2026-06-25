@@ -1,4 +1,4 @@
-# neuralc 🔥
+# neuralc
 > A fast, lightweight deep learning library written in C — no dependencies, no bloat.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
