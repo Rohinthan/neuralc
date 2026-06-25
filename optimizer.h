@@ -59,4 +59,23 @@ RMSProp *rmsprop_create(float lr, float rho, float eps, float weight_decay);
 void     rmsprop_step(RMSProp *opt, Network *net);
 void     rmsprop_free(RMSProp *opt);
 
+/* ── Gradient Clipping ──────────────────────────────────────────── */
+/*
+ * Clips gradients of all layers in a network by global L2 norm.
+ * Call this BEFORE optimizer step to prevent exploding gradients.
+ *
+ * Usage:
+ *   nn_clip_gradients(net, 1.0f);   // clip to norm 1.0
+ *   adam_step(opt, net);
+ *
+ * max_norm: gradients are scaled down if global norm exceeds this.
+ *   Typical values: 1.0, 5.0
+ *   For LSTM/RNN: use 1.0 (very prone to exploding)
+ *   For Dense:    use 5.0 (more stable)
+ */
+void nn_clip_gradients(Network *net, float max_norm);
+
+/* Per-layer gradient norm (useful for debugging) */
+float nn_grad_norm(const Network *net);
+
 #endif /* OPTIMIZER_H */
