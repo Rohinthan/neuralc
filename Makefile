@@ -6,7 +6,7 @@ SRC     = tensor.c layer.c nn.c optimizer.c dataloader.c \
           dropout.c batchnorm.c conv.c rnn.c mnist.c
 OBJ     = $(SRC:.c=.o)
 
-.PHONY: all demo rnn_demo mnist_demo clean libneuralc omp gpu
+.PHONY: all demo rnn_demo mnist_demo demo_mnist clean libneuralc omp gpu
 
 all: neuralc demo rnn_demo mnist_demo
 
@@ -19,7 +19,7 @@ demo: $(OBJ) demo.o
 rnn_demo: $(OBJ) demo_rnn.o
 	$(CC) $(CFLAGS) -o rnn_demo $(OBJ) demo_rnn.o $(LDFLAGS)
 
-mnist_demo: $(OBJ) demo_mnist.o
+mnist_demo demo_mnist: $(OBJ) demo_mnist.o
 	$(CC) $(CFLAGS) -o mnist_demo $(OBJ) demo_mnist.o $(LDFLAGS)
 
 libneuralc: $(SRC)
