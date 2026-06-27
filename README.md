@@ -67,7 +67,7 @@ See [MNIST.md](MNIST.md) for full setup guide and contributor tasks.
 ---
 
 ## Config.md
-- Before you run the commands read the Config.md file
+- Before you quick start read the Config.md file
    
 ## Quick Start
 
