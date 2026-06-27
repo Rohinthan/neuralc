@@ -8,6 +8,7 @@
  */
 
 #include "config_ui.h"
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -715,21 +716,63 @@ int config_ui_run(NeuralcConfig *cfg) {
     term_size();
     build_menus(cfg);
 
-    /* move cursor to first selectable item */
     root_menu.cursor = next_selectable(&root_menu, -1, +1);
-
     int saved = run_menu(&root_menu, "Main Menu");
-
-    if (saved) {
-        collect_config(cfg);
-        printf(CLEAR_SCREEN);
-        term_restore();
-        return 0;
-    }
 
     printf(CLEAR_SCREEN);
     term_restore();
-    return 1;
+
+    if (!saved) {
+        printf("\nConfiguration not saved.\n");
+        return 1;
+    }
+
+    collect_config(cfg);
+
+    /* ── show changes summary ── */
+    printf("\n" BOLD "neuralc Configuration Saved!\n" RESET);
+    printf("─────────────────────────────────────────\n");
+
+    /* Thread count animation */
+    if (cfg->use_omp) {
+        int threads = cfg->omp_auto ? 4 : cfg->omp_threads;
+        printf("  OpenMP:   " FG_GREEN "enabled" RESET "\n");
+        printf("  Threads:  ");
+        fflush(stdout);
+        for (int t = 1; t <= threads; t++) {
+            printf(FG_CYAN BOLD "[%d]" RESET " ", t);
+            fflush(stdout);
+            struct timespec ts = {0, 100000000L};  /* 0.1s per tick */
+            nanosleep(&ts, NULL);
+        }
+        if (cfg->omp_auto)
+            printf(FG_GREEN "✓ auto (all cores)\n" RESET);
+        else
+            printf(FG_GREEN "✓ %d thread(s)\n" RESET, threads);
+    } else {
+        printf("  OpenMP:   " FG_YELLOW "disabled (single-core)\n" RESET);
+    }
+
+    const char *ol[]  = {"-O0","-O1","-O2","-O3"};
+    const char *opt[] = {"Adam","SGD","RMSProp"};
+    printf("  GPU:      %s\n", cfg->use_gpu ?
+           FG_GREEN "enabled" RESET : "disabled");
+    printf("  Opt flag: %s\n",
+           ol[cfg->opt_level < 4 ? cfg->opt_level : 2]);
+    printf("  Batch:    %d\n",   cfg->batch_size);
+    printf("  LR:       %.6f\n", cfg->learning_rate);
+    printf("  Optim:    %s\n",
+           opt[cfg->optimizer < 3 ? cfg->optimizer : 0]);
+    printf("  GradClip: %s (norm=%.1f)\n",
+           cfg->use_grad_clip ? "yes":"no", cfg->grad_clip);
+    printf("  Debug:    %s\n",
+           cfg->debug_mode ? FG_YELLOW "ON" RESET : "off");
+    printf("─────────────────────────────────────────\n");
+    printf(FG_GREEN BOLD "\n✓ Saved → neuralc_config.h\n\n" RESET);
+    printf("Next steps:\n");
+    printf(BOLD "  make clean && make\n" RESET);
+    printf(BOLD "  ./mnist_demo\n\n" RESET);
+    return 0;
 }
 
 int config_save(const NeuralcConfig *cfg, const char *path) {
