@@ -4,7 +4,7 @@ LDFLAGS = -lm
 
 # ── auto-load neuralc_config.h if it exists ───────────────────────
 ifneq (,$(wildcard neuralc_config.h))
-  CFLAGS  += -DNEURALC_HAS_CONFIG
+  CFLAGS += -DNEURALC_HAS_CONFIG
   NEURALC_USE_OMP := $(shell grep 'NEURALC_USE_OMP ' neuralc_config.h | awk '{print $$3}')
   NEURALC_USE_GPU := $(shell grep 'NEURALC_USE_GPU ' neuralc_config.h | awk '{print $$3}')
   NEURALC_OPT     := $(shell grep 'NEURALC_OPT_LEVEL' neuralc_config.h | awk '{print $$3}' | tr -d '"')
@@ -17,9 +17,9 @@ ifneq (,$(wildcard neuralc_config.h))
     LDFLAGS += -lOpenCL
   endif
   ifneq ($(NEURALC_OPT),)
-    CFLAGS  := $(filter-out -O2,$(CFLAGS)) $(NEURALC_OPT)
+    CFLAGS := $(filter-out -O2,$(CFLAGS)) $(NEURALC_OPT)
   endif
-  $(info [neuralc] Using neuralc_config.h — OMP=$(NEURALC_USE_OMP) GPU=$(NEURALC_USE_GPU) OPT=$(NEURALC_OPT))
+  $(info [neuralc] Config loaded — OMP=$(NEURALC_USE_OMP) GPU=$(NEURALC_USE_GPU) OPT=$(NEURALC_OPT))
 endif
 
 SRC     = tensor.c layer.c nn.c optimizer.c dataloader.c \
@@ -42,13 +42,12 @@ rnn_demo: $(OBJ) demo_rnn.o
 mnist_demo demo_mnist: $(OBJ) demo_mnist.o
 	$(CC) $(CFLAGS) -o mnist_demo $(OBJ) demo_mnist.o $(LDFLAGS)
 
-# ── neuralc config UI ─────────────────────────────────────────────
-config: config_ui.o neuralc_config_main.o
-	$(CC) $(CFLAGS) -o neuralc_config config_ui.o neuralc_config_main.o $(LDFLAGS)
-	@echo ""
-	@echo "✓ Config UI built! Run: ./neuralc_config"
-	@echo "  Then: make clean && make"
-	@echo ""
+# ── menuconfig — interactive configuration UI ─────────────────────
+config: menuconfig
+	@./menuconfig
+
+menuconfig: config_ui.o neuralc_config_main.o
+	$(CC) $(CFLAGS) -o menuconfig config_ui.o neuralc_config_main.o $(LDFLAGS)
 
 config_ui.o: config_ui.c config_ui.h
 	$(CC) $(CFLAGS) -c config_ui.c -o config_ui.o
@@ -80,5 +79,5 @@ clean:
 	rm -f $(OBJ) main.o demo.o demo_rnn.o demo_mnist.o \
 	      config_ui.o neuralc_config_main.o neuralc_init.o \
 	      neuralc demo rnn_demo mnist_demo libneuralc.so \
-	      neuralc_config xor_weights.bin mnist_best.bin \
+	      menuconfig xor_weights.bin mnist_best.bin \
 	      gpu/neuralc_gpu.o neuralc_gpu test_rnn_min
