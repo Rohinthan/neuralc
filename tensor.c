@@ -373,6 +373,9 @@ Tensor *tensor_reshape(Tensor *t, const int *new_shape, int new_ndim) {
 }
 
 void tensor_fill(Tensor *t, float val) {
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(t->size > 4096)
+#endif
     for (size_t i = 0; i < t->size; i++) t->data[i] = val;
 }
 
@@ -436,6 +439,9 @@ int tensor_argmin(const Tensor *t) {
 void tensor_argmax_rows(const Tensor *t, int *out) {
     CF_CHECK_2D(t);
     int rows = t->shape[0], cols = t->shape[1];
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(rows > 16)
+#endif
     for (int r = 0; r < rows; r++) {
         int   best     = 0;
         float best_val = t->data[r * cols];
@@ -453,27 +459,51 @@ void tensor_sum_axis(const Tensor *t, int axis, Tensor *out) {
     CF_CHECK_2D(t);
     int rows = t->shape[0], cols = t->shape[1];
     tensor_fill(out, 0.0f);
+
     if (axis == 0) {
-        /* sum across rows → out shape [1, cols] */
+        /*
+         * Sum across rows → out shape [cols]
+         *
+         * GEMINI FIX: old loop (r outer, c inner) caused data race —
+         * multiple threads writing to same out->data[c].
+         *
+         * FIX: flip to c outer, r inner. Each thread owns one column
+         * exclusively — no race, no atomic needed.
+         */
         CF_CHECK(out->size == (size_t)cols,
                  "sum_axis(0): out must have size == cols");
-        for (int r = 0; r < rows; r++)
-            for (int c = 0; c < cols; c++)
-                out->data[c] += t->data[r * cols + c];
+#ifdef USE_OMP
+        #pragma omp parallel for schedule(static) if(cols > 64)
+#endif
+        for (int c = 0; c < cols; c++) {
+            float sum = 0.0f;
+            for (int r = 0; r < rows; r++)
+                sum += t->data[r * cols + c];
+            out->data[c] = sum;   /* single write per thread — safe */
+        }
     } else {
-        /* sum across cols → out shape [rows, 1] */
+        /*
+         * Sum across cols → out shape [rows]
+         * Each row is independent — parallelizing over r is safe.
+         */
         CF_CHECK(out->size == (size_t)rows,
                  "sum_axis(1): out must have size == rows");
-        for (int r = 0; r < rows; r++)
+#ifdef USE_OMP
+        #pragma omp parallel for schedule(static) if(rows > 16)
+#endif
+        for (int r = 0; r < rows; r++) {
+            float sum = 0.0f;
             for (int c = 0; c < cols; c++)
-                out->data[r] += t->data[r * cols + c];
+                sum += t->data[r * cols + c];
+            out->data[r] = sum;   /* single write per thread — safe */
+        }
     }
 }
 
 void tensor_mean_axis(const Tensor *t, int axis, Tensor *out) {
     tensor_sum_axis(t, axis, out);
     float div = (axis == 0) ? (float)t->shape[0] : (float)t->shape[1];
-    tensor_scale(out, 1.0f / div, out);
+    tensor_scale(out, 1.0f / div, out);  /* tensor_scale already parallel */
 }
 
 /* ── error handler ───────────────────────────────────────────────── */
