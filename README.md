@@ -29,7 +29,7 @@ Best test accuracy: 95.79%
 ```
 
 See [MNIST.md](MNIST.md) for full setup guide and contributor tasks.
-see [CONFIG.md][CONFIG.md] for set manual thread ,cpu and gpu allocations 
+
 ---
 
 ## Features (v0.1)
