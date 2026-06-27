@@ -119,6 +119,7 @@ Rules:
 - Compile clean with `-Wall -Wextra` (warnings are treated seriously)
 
 ---
+also check the CONFIG.md to see [CONFIG.md][CONFIG.md] for set manual thread ,cpu and gpu allocations 
 
 ## Good First Issues
 
