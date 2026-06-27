@@ -3,6 +3,9 @@
 #include <math.h>
 #include <assert.h>
 #include <string.h>
+#ifdef USE_OMP
+#include <omp.h>
+#endif
 
 /* ── helpers ─────────────────────────────────────────────────────── */
 
@@ -83,8 +86,12 @@ void dense_forward(DenseLayer *l, const Tensor *input, Tensor *output) {
         l->a = alloc2(batch, out_f);
     }
 
-    /* z = input @ W^T  (W is [out,in], so W^T is [in,out]) */
-    /* We compute manually: z[b,o] = sum_i input[b,i]*W[o,i] + b[o] */
+    /* z = input @ W^T  (W is [out,in], so W^T is [in,out])      */
+    /* z[b,o] = sum_i input[b,i]*W[o,i] + b[o]                   */
+    /* Parallel over batch — each b writes to different rows of z */
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(batch * out_f > 1024)
+#endif
     for (int b = 0; b < batch; b++) {
         for (int o = 0; o < out_f; o++) {
             float acc = l->b->data[o];
@@ -142,37 +149,53 @@ void dense_backward(DenseLayer *l, const Tensor *grad_out) {
             break;
     }
 
-    /* dW = dz^T @ input   [out_f, batch] x [batch, in_f] → [out_f, in_f] */
+    /* dW = dz^T @ input  [out_f, in_f]                            */
+    /* Parallel over o — each o writes to different row of dW      */
     tensor_fill(l->dW, 0.0f);
-    for (int o = 0; o < out_f; o++)
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(out_f * in_f > 1024)
+#endif
+    for (int o = 0; o < out_f; o++) {
         for (int b = 0; b < batch; b++) {
             float dzbo = dz->data[b*out_f + o];
             for (int i = 0; i < in_f; i++)
                 l->dW->data[o*in_f + i] += dzbo * l->input->data[b*in_f + i];
         }
+    }
     /* average over batch */
     tensor_scale(l->dW, 1.0f / batch, l->dW);
 
-    /* db = mean over batch of dz  [out_f] */
+    /* db = mean over batch of dz  [out_f]                         */
+    /* Parallel over o with local sum — no race condition           */
     tensor_fill(l->db, 0.0f);
-    for (int b = 0; b < batch; b++)
-        for (int o = 0; o < out_f; o++)
-            l->db->data[o] += dz->data[b*out_f + o];
-    tensor_scale(l->db, 1.0f / batch, l->db);
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(out_f > 64)
+#endif
+    for (int o = 0; o < out_f; o++) {
+        float sum = 0.0f;
+        for (int b = 0; b < batch; b++)
+            sum += dz->data[b*out_f + o];
+        l->db->data[o] = sum / (float)batch;
+    }
 
-    /* dX = dz @ W   [batch, out_f] x [out_f, in_f] → [batch, in_f] */
+    /* dX = dz @ W  [batch, in_f]                                  */
+    /* Parallel over b — each b writes to different row of dX      */
     if (!l->dX || l->dX->shape[0] != batch) {
         tensor_free(l->dX);
         int shx[2] = {batch, in_f};
         l->dX = tensor_zeros(shx, 2);
     }
     tensor_fill(l->dX, 0.0f);
-    for (int b = 0; b < batch; b++)
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(batch * in_f > 1024)
+#endif
+    for (int b = 0; b < batch; b++) {
         for (int o = 0; o < out_f; o++) {
             float dzbo = dz->data[b*out_f + o];
             for (int i = 0; i < in_f; i++)
                 l->dX->data[b*in_f + i] += dzbo * l->W->data[o*in_f + i];
         }
+    }
 
     tensor_free(dz);
 }
