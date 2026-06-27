@@ -207,22 +207,38 @@ void tensor_clip(const Tensor *a, float lo, float hi, Tensor *out) {
 
 float tensor_sum(const Tensor *t) {
     float s = 0.0f;
+#ifdef USE_OMP
+    #pragma omp parallel for reduction(+:s) schedule(static) \
+        if(t->size > 4096)
+#endif
     for (size_t i = 0; i < t->size; i++) s += t->data[i];
     return s;
 }
 float tensor_mean(const Tensor *t) { return tensor_sum(t) / (float)t->size; }
 float tensor_max(const Tensor *t) {
     float m = t->data[0];
+#ifdef USE_OMP
+    #pragma omp parallel for reduction(max:m) schedule(static) \
+        if(t->size > 4096)
+#endif
     for (size_t i = 1; i < t->size; i++) if (t->data[i] > m) m = t->data[i];
     return m;
 }
 float tensor_min(const Tensor *t) {
     float m = t->data[0];
+#ifdef USE_OMP
+    #pragma omp parallel for reduction(min:m) schedule(static) \
+        if(t->size > 4096)
+#endif
     for (size_t i = 1; i < t->size; i++) if (t->data[i] < m) m = t->data[i];
     return m;
 }
 float tensor_norm(const Tensor *t) {
     float s = 0.0f;
+#ifdef USE_OMP
+    #pragma omp parallel for reduction(+:s) schedule(static) \
+        if(t->size > 4096)
+#endif
     for (size_t i = 0; i < t->size; i++) s += t->data[i] * t->data[i];
     return sqrtf(s);
 }
@@ -231,21 +247,31 @@ float tensor_norm(const Tensor *t) {
 
 void tensor_matmul(const Tensor *a, const Tensor *b, Tensor *out) {
     /* a: [M,K]  b: [K,N]  out: [M,N] */
-    CF_CHECK(a->ndim==2 && b->ndim==2 && out->ndim==2, "matmul: all tensors must be 2D");
+    CF_CHECK(a->ndim==2 && b->ndim==2 && out->ndim==2,
+             "matmul: all tensors must be 2D");
     int M = a->shape[0], K = a->shape[1];
     int K2 = b->shape[0], N = b->shape[1];
     CF_CHECK(K == K2, "matmul: inner dimensions must match (a.cols == b.rows)");
-    CF_CHECK(out->shape[0]==M && out->shape[1]==N, "matmul: output shape mismatch");
-    memset(out->data, 0, out->size * sizeof(float));
-    #ifdef USE_OMP
-    #pragma omp parallel for schedule(static) if(M*K*N > 8192)
-    #endif
-    for (int i = 0; i < M; i++)
-        for (int k = 0; k < K; k++) {
-            float aik = a->data[i*K + k];
-            for (int j = 0; j < N; j++)
-                out->data[i*N + j] += aik * b->data[k*N + j];
+    CF_CHECK(out->shape[0]==M && out->shape[1]==N,
+             "matmul: output shape mismatch");
+
+    /*
+     * Restructured to i,j outer / k inner so collapse(2) is safe.
+     * Each (i,j) pair has its own local `sum` — no data race.
+     * Original i,k,j order was NOT parallel-safe for j dimension.
+     */
+#ifdef USE_OMP
+    #pragma omp parallel for collapse(2) schedule(static) \
+        if((size_t)M*K*N > 8192)
+#endif
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            float sum = 0.0f;
+            for (int k = 0; k < K; k++)
+                sum += a->data[i*K + k] * b->data[k*N + j];
+            out->data[i*N + j] = sum;   /* single write — no race */
         }
+    }
 }
 
 void tensor_transpose(const Tensor *a, Tensor *out) {
@@ -261,21 +287,33 @@ void tensor_transpose(const Tensor *a, Tensor *out) {
 
 void tensor_relu(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+#endif
     for (size_t i = 0; i < a->size; i++)
         out->data[i] = a->data[i] > 0.0f ? a->data[i] : 0.0f;
 }
 void tensor_relu_grad(const Tensor *a, const Tensor *grad, Tensor *out) {
     CF_CHECK_SHAPE(a, grad); CF_CHECK_SHAPE(a, out);
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+#endif
     for (size_t i = 0; i < a->size; i++)
         out->data[i] = a->data[i] > 0.0f ? grad->data[i] : 0.0f;
 }
 void tensor_sigmoid(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+#endif
     for (size_t i = 0; i < a->size; i++)
         out->data[i] = 1.0f / (1.0f + expf(-a->data[i]));
 }
 void tensor_sigmoid_grad(const Tensor *sig, const Tensor *grad, Tensor *out) {
     CF_CHECK_SHAPE(sig, grad); CF_CHECK_SHAPE(sig, out);
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(sig->size > 4096)
+#endif
     for (size_t i = 0; i < sig->size; i++) {
         float s = sig->data[i];
         out->data[i] = grad->data[i] * s * (1.0f - s);
@@ -283,28 +321,38 @@ void tensor_sigmoid_grad(const Tensor *sig, const Tensor *grad, Tensor *out) {
 }
 void tensor_tanh_t(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(a->size > 4096)
+#endif
     for (size_t i = 0; i < a->size; i++)
         out->data[i] = tanhf(a->data[i]);
 }
 void tensor_tanh_grad(const Tensor *th, const Tensor *grad, Tensor *out) {
     CF_CHECK_SHAPE(th, grad); CF_CHECK_SHAPE(th, out);
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(th->size > 4096)
+#endif
     for (size_t i = 0; i < th->size; i++) {
         float t = th->data[i];
         out->data[i] = grad->data[i] * (1.0f - t*t);
     }
 }
+
 /* row-wise softmax for 2-D [batch, classes] */
 void tensor_softmax(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
     int rows = (a->ndim >= 2) ? a->shape[0] : 1;
     int cols = (int)(a->size / rows);
+#ifdef USE_OMP
+    #pragma omp parallel for schedule(static) if(rows > 16)
+#endif
     for (int r = 0; r < rows; r++) {
         float *src = a->data   + r*cols;
         float *dst = out->data + r*cols;
         float mx = src[0];
         for (int c = 1; c < cols; c++) if (src[c] > mx) mx = src[c];
         float s = 0.0f;
-        for (int c = 0; c < cols; c++) { dst[c] = expf(src[c] - mx); s += dst[c]; }
+        for (int c = 0; c < cols; c++) { dst[c] = expf(src[c]-mx); s += dst[c]; }
         for (int c = 0; c < cols; c++) dst[c] /= s;
     }
 }
