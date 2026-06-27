@@ -1,7 +1,7 @@
 /*
  * neuralc_config_main.c — entry point for neuralc config UI
  *
- * Run:  make config && ./neuralc_config
+ * Run:  make config  (auto-runs menuconfig)
  *
  * Loads existing config (if any), runs the interactive UI,
  * saves neuralc_config.h on exit.
