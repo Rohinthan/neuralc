@@ -1,7 +1,7 @@
 # neuralc
 > A fast, lightweight deep learning library written in C — no dependencies, no bloat.
-> 
 ---
+
 
 ## What is neuralc
 
@@ -66,8 +66,6 @@ See [MNIST.md](MNIST.md) for full setup guide and contributor tasks.
 
 ---
 
-## Config.md
-- Before you quick start read the Config.md file
    
 ## Quick Start
 
