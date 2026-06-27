@@ -340,6 +340,11 @@ static void popup_message(const char *title, const char *msg) {
 
 
 
+/* ── flush pending input (prevents multiple UI openings) ─────────── */
+static void flush_input(void) {
+    tcflush(STDIN_FILENO, TCIFLUSH);
+}
+
 /* ── run a menu ──────────────────────────────────────────────────── */
 
 static int run_menu(Menu *m, const char *breadcrumb);  /* forward decl */
@@ -364,7 +369,10 @@ static int handle_item(Menu *m, int idx, const char *breadcrumb) {
         if (it->submenu) {
             char bc[256];
             snprintf(bc, sizeof(bc), "%s > %s", breadcrumb, it->label);
-            return run_menu(it->submenu, bc);
+            flush_input();              /* clear buffer before entering */
+            int r = run_menu(it->submenu, bc);
+            flush_input();              /* clear buffer after returning */
+            return r;
         }
         break;
     default:
@@ -374,6 +382,7 @@ static int handle_item(Menu *m, int idx, const char *breadcrumb) {
 }
 
 static int run_menu(Menu *m, const char *breadcrumb) {
+    flush_input();                      /* clear any stale keypresses  */
     while (1) {
         draw_menu(m, breadcrumb);
         int k = read_key();
