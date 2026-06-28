@@ -1,5 +1,5 @@
 CC      = gcc
-CFLAGS  = -O2 -Wall -Wextra -std=c11
+CFLAGS  = -O2 -Wall -Wextra -std=c11 -Iinclude -I.
 CFLAGS += -I include/     # finds all headers in include/
 CFLAGS += -I config/      # finds config_ui.h and neuralc_init.h
 LDFLAGS = -lm
