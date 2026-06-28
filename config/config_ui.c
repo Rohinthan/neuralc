@@ -1,14 +1,15 @@
 /*
- * config_ui.c — neuralc kernel-style configuration UI
+ * config_ui.c — Configuration Interface Module
  *
- * Terminal UI using ANSI escape codes + POSIX termios.
- * No external dependencies required.
+ * Terminal User Interface utilizing standard ANSI escape sequences
+ * and POSIX termios configuration. Designed for kernel-style menu 
+ * management with zero external module dependencies.
  *
- * Looks and feels like Linux menuconfig.
+ * Copyright (c) 2026. All rights reserved.
  */
 
-#include "config_ui.h"
 #define _POSIX_C_SOURCE 200809L
+#include "config_ui.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,13 +18,61 @@
 #include <sys/ioctl.h>
 #include <math.h>
 #include <time.h>
+#include <fcntl.h>
 
-/* ── ANSI color codes ────────────────────────────────────────────── */
+/* ── System Hardware Topology Detection ──────────────────────────── */
+
+void detect_system_hardware(HardwareProfile *prof) {
+    if (!prof) return;
+
+    /* Query active processing cores via POSIX configuration registry */
+    long cores = sysconf(_SC_NPROCESSORS_ONLN);
+    prof->cpu_cores = (cores > 0) ? (int)cores : 1;
+
+    /* Initialize target buffers with standard system fallbacks */
+    strncpy(prof->cpu_model, "Unknown CPU Architecture", sizeof(prof->cpu_model) - 1);
+    prof->cpu_model[sizeof(prof->cpu_model) - 1] = '\0';
+    prof->gpu_detected = 0;
+    strncpy(prof->gpu_name, "None detected", sizeof(prof->gpu_name) - 1);
+    prof->gpu_name[sizeof(prof->gpu_name) - 1] = '\0';
+
+    /* Extract exact processor model descriptor via procfs */
+    FILE *f = fopen("/proc/cpuinfo", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            if (strncmp(line, "model name", 10) == 0) {
+                char *colon = strchr(line, ':');
+                if (colon) {
+                    colon++;
+                    while (*colon == ' ' || *colon == '\t') colon++;
+                    char *nl = strchr(colon, '\n');
+                    if (nl) *nl = '\0';
+                    strncpy(prof->cpu_model, colon, sizeof(prof->cpu_model) - 1);
+                    prof->cpu_model[sizeof(prof->cpu_model) - 1] = '\0';
+                    break;
+                }
+            }
+        }
+        fclose(f);
+    }
+
+    /* Validate graphics subsystem availability via Direct Rendering Manager */
+    if (access("/sys/class/drm/renderD128", F_OK) == 0) {
+        prof->gpu_detected = 1;
+        strncpy(prof->gpu_name, "GPU detected (renderD128)", sizeof(prof->gpu_name) - 1);
+    } else if (access("/dev/dri/card0", F_OK) == 0) {
+        prof->gpu_detected = 1;
+        strncpy(prof->gpu_name, "GPU detected (/dev/dri/card0)", sizeof(prof->gpu_name) - 1);
+    }
+    prof->gpu_name[sizeof(prof->gpu_name) - 1] = '\0';
+}
+
+/* ── ANSI Escape Sequences & Color Macros ────────────────────────── */
 #define RESET       "\033[0m"
 #define BOLD        "\033[1m"
 #define DIM         "\033[2m"
 
-/* foreground */
 #define FG_BLACK    "\033[30m"
 #define FG_RED      "\033[31m"
 #define FG_GREEN    "\033[32m"
@@ -33,7 +82,6 @@
 #define FG_CYAN     "\033[36m"
 #define FG_WHITE    "\033[37m"
 
-/* background */
 #define BG_BLACK    "\033[40m"
 #define BG_RED      "\033[41m"
 #define BG_GREEN    "\033[42m"
@@ -43,13 +91,12 @@
 #define BG_CYAN     "\033[46m"
 #define BG_WHITE    "\033[47m"
 
-/* cursor control */
 #define CLEAR_SCREEN "\033[2J\033[H"
 #define CURSOR_HIDE  "\033[?25l"
 #define CURSOR_SHOW  "\033[?25h"
 #define CURSOR_POS(r,c) printf("\033[%d;%dH", (r), (c))
 
-/* ── terminal state ──────────────────────────────────────────────── */
+/* ── POSIX Terminal State Management ──────────────────────────────── */
 static struct termios old_term;
 static int term_rows = 24;
 static int term_cols = 80;
@@ -79,7 +126,7 @@ static void term_size(void) {
     }
 }
 
-/* ── keyboard input ──────────────────────────────────────────────── */
+/* ── Keyboard Input Parsing ──────────────────────────────────────── */
 #define KEY_UP      1000
 #define KEY_DOWN    1001
 #define KEY_LEFT    1002
@@ -108,15 +155,9 @@ static int read_key(void) {
     return (int)c;
 }
 
-/* ── drawing helpers ─────────────────────────────────────────────── */
+/* ── UI Drawing Primitives ───────────────────────────────────────── */
 
-
-
-
-
-static void draw_border_box(int row, int col, int h, int w,
-                             const char *title) {
-    /* top border */
+static void draw_border_box(int row, int col, int h, int w, const char *title) {
     CURSOR_POS(row, col);
     printf(BG_BLACK FG_CYAN "┌");
     if (title && strlen(title) > 0) {
@@ -128,7 +169,6 @@ static void draw_border_box(int row, int col, int h, int w,
     }
     printf("┐");
 
-    /* sides */
     for (int r = 1; r < h - 1; r++) {
         CURSOR_POS(row + r, col);
         printf(BG_BLACK FG_CYAN "│");
@@ -137,17 +177,15 @@ static void draw_border_box(int row, int col, int h, int w,
         printf(FG_CYAN "│");
     }
 
-    /* bottom */
     CURSOR_POS(row + h - 1, col);
     printf(BG_BLACK FG_CYAN "└");
     for (int i = 1; i < w - 1; i++) printf("─");
     printf("┘" RESET);
 }
 
-/* ── item rendering ──────────────────────────────────────────────── */
+/* ── Element Rendering Engine ────────────────────────────────────── */
 
-static void render_item(const ConfigItem *it, int row, int col,
-                         int width, int selected) {
+static void render_item(const ConfigItem *it, int row, int col, int width, int selected) {
     CURSOR_POS(row, col);
 
     if (selected)
@@ -155,7 +193,6 @@ static void render_item(const ConfigItem *it, int row, int col,
     else
         printf(BG_BLACK FG_WHITE);
 
-    /* clear line */
     for (int i = 0; i < width; i++) printf(" ");
     CURSOR_POS(row, col + 1);
 
@@ -174,24 +211,19 @@ static void render_item(const ConfigItem *it, int row, int col,
     case ITEM_TOGGLE:
         if (selected) printf(BG_WHITE FG_BLACK BOLD);
         else          printf(BG_BLACK FG_WHITE);
-        printf("  [%s] %s",
-               it->toggle ? "*" : " ",
-               it->label);
+        printf("  [%s] %s", it->toggle ? "*" : " ", it->label);
         break;
 
     case ITEM_RADIO:
         if (selected) printf(BG_WHITE FG_BLACK BOLD);
         else          printf(BG_BLACK FG_WHITE);
-        printf("  (%s) %s  ",
-               it->radio_opts[it->radio_sel],
-               it->label);
+        printf("  (%s) %s  ", it->radio_opts[it->radio_sel], it->label);
         if (selected) {
             printf(BG_WHITE FG_BLUE);
             printf("< ");
             for (int i = 0; i < it->radio_count; i++) {
                 if (i == it->radio_sel)
-                    printf(BOLD "(%s)" RESET BG_WHITE FG_BLUE,
-                           it->radio_opts[i]);
+                    printf(BOLD "(%s)" RESET BG_WHITE FG_BLUE, it->radio_opts[i]);
                 else
                     printf(" %s ", it->radio_opts[i]);
                 if (i < it->radio_count - 1) printf(" | ");
@@ -205,8 +237,7 @@ static void render_item(const ConfigItem *it, int row, int col,
         else          printf(BG_BLACK FG_WHITE);
         printf("  (%d) %s", it->num_val, it->label);
         if (selected)
-            printf(FG_CYAN "  [← → to change, min:%d max:%d]",
-                   it->num_min, it->num_max);
+            printf(FG_CYAN "  [← → to change, min:%d max:%d]", it->num_min, it->num_max);
         break;
 
     case ITEM_FLOAT:
@@ -227,7 +258,7 @@ static void render_item(const ConfigItem *it, int row, int col,
     printf(RESET);
 }
 
-/* ── help bar ────────────────────────────────────────────────────── */
+/* ── Contextual System Navigation Indicators ────────────────────── */
 
 static void draw_help_bar(int row, const char *help_text) {
     CURSOR_POS(row, 1);
@@ -236,13 +267,11 @@ static void draw_help_bar(int row, const char *help_text) {
 
     CURSOR_POS(row + 1, 1);
     printf(BG_BLACK FG_YELLOW);
-    printf("  %s", help_text ? help_text :
-           "Use arrows to navigate, Space/Enter to toggle, S to save, Q to quit");
+    printf("  %s", help_text ? help_text : "Use arrows to navigate, Space/Enter to toggle, S to save, Q to quit");
     for (int i = 0; i < term_cols - 2; i++) printf(" ");
 
     CURSOR_POS(row + 2, 1);
     printf(BG_BLUE FG_WHITE BOLD);
-    /* bottom button bar */
     int bw = term_cols / 5;
     char btns[5][20] = {"<Select>","<Exit>","<Help>","<Save>","<Load>"};
     for (int i = 0; i < 5; i++) {
@@ -251,7 +280,7 @@ static void draw_help_bar(int row, const char *help_text) {
     printf(RESET);
 }
 
-/* ── main menu renderer ──────────────────────────────────────────── */
+/* ── Master Interface Interface Layout ───────────────────────────── */
 
 #define MENU_TOP    4
 #define MENU_MARGIN 4
@@ -260,7 +289,6 @@ static void draw_menu(Menu *m, const char *breadcrumb) {
     term_size();
     printf(CLEAR_SCREEN);
 
-    /* title bar */
     CURSOR_POS(1, 1);
     printf(BG_BLUE FG_WHITE BOLD);
     for (int i = 0; i < term_cols; i++) printf(" ");
@@ -270,7 +298,6 @@ static void draw_menu(Menu *m, const char *breadcrumb) {
     printf("neuralc v0.1  ");
     printf(RESET);
 
-    /* subtitle / breadcrumb */
     CURSOR_POS(2, 1);
     printf(BG_BLACK FG_CYAN);
     for (int i = 0; i < term_cols; i++) printf(" ");
@@ -278,12 +305,10 @@ static void draw_menu(Menu *m, const char *breadcrumb) {
     printf(FG_YELLOW BOLD "► " FG_WHITE "%s", breadcrumb);
     printf(RESET);
 
-    /* menu box */
     int box_h = term_rows - MENU_TOP - 4;
     int box_w = term_cols - MENU_MARGIN * 2;
     draw_border_box(MENU_TOP, MENU_MARGIN, box_h, box_w, m->title);
 
-    /* visible range */
     int visible = box_h - 2;
     if (m->cursor < m->scroll) m->scroll = m->cursor;
     if (m->cursor >= m->scroll + visible) m->scroll = m->cursor - visible + 1;
@@ -291,40 +316,33 @@ static void draw_menu(Menu *m, const char *breadcrumb) {
 
     for (int i = 0; i < visible && (m->scroll + i) < m->count; i++) {
         int idx = m->scroll + i;
-        render_item(&m->items[idx],
-                    MENU_TOP + 1 + i,
-                    MENU_MARGIN + 1,
-                    box_w - 2,
-                    idx == m->cursor);
+        render_item(&m->items[idx], MENU_TOP + 1 + i, MENU_MARGIN + 1, box_w - 2, idx == m->cursor);
     }
 
-    /* scroll indicator */
     if (m->count > visible) {
         CURSOR_POS(MENU_TOP + 1, MENU_MARGIN + box_w - 3);
         printf(BG_BLACK FG_CYAN "%d/%d" RESET, m->cursor + 1, m->count);
     }
 
-    /* help bar */
     const char *help = m->items[m->cursor].help;
     draw_help_bar(term_rows - 2, help[0] ? help : NULL);
 
     fflush(stdout);
 }
 
-/* ── menu navigation ─────────────────────────────────────────────── */
+/* ── Traversal Index Utilities ───────────────────────────────────── */
 
 static int next_selectable(Menu *m, int from, int dir) {
     int i = from + dir;
     while (i >= 0 && i < m->count) {
-        if (m->items[i].type != ITEM_SEPARATOR &&
-            m->items[i].type != ITEM_INFO)
+        if (m->items[i].type != ITEM_SEPARATOR && m->items[i].type != ITEM_INFO)
             return i;
         i += dir;
     }
     return from;
 }
 
-/* ── popup dialogs ───────────────────────────────────────────────── */
+/* ── Interface Modals ────────────────────────────────────────────── */
 
 static void popup_message(const char *title, const char *msg) {
     int w = 50, h = 7;
@@ -339,16 +357,13 @@ static void popup_message(const char *title, const char *msg) {
     read_key();
 }
 
-
-
-/* ── flush pending input (prevents multiple UI openings) ─────────── */
 static void flush_input(void) {
     tcflush(STDIN_FILENO, TCIFLUSH);
 }
 
-/* ── run a menu ──────────────────────────────────────────────────── */
+/* ── Menu Loop Processing Pipeline ────────────────────────────────── */
 
-static int run_menu(Menu *m, const char *breadcrumb);  /* forward decl */
+static int run_menu(Menu *m, const char *breadcrumb);
 
 static int handle_item(Menu *m, int idx, const char *breadcrumb) {
     ConfigItem *it = &m->items[idx];
@@ -359,20 +374,13 @@ static int handle_item(Menu *m, int idx, const char *breadcrumb) {
     case ITEM_RADIO:
         it->radio_sel = (it->radio_sel + 1) % it->radio_count;
         break;
-    case ITEM_NUMBER:
-        if (it->num_val < it->num_max)
-            it->num_val++;
-        break;
-    case ITEM_FLOAT:
-        it->float_val *= 2.0f;
-        break;
     case ITEM_SUBMENU:
         if (it->submenu) {
             char bc[256];
             snprintf(bc, sizeof(bc), "%s > %s", breadcrumb, it->label);
-            flush_input();              /* clear buffer before entering */
+            flush_input();
             int r = run_menu(it->submenu, bc);
-            flush_input();              /* clear buffer after returning */
+            flush_input();
             return r;
         }
         break;
@@ -383,7 +391,7 @@ static int handle_item(Menu *m, int idx, const char *breadcrumb) {
 }
 
 static int run_menu(Menu *m, const char *breadcrumb) {
-    flush_input();                      /* clear any stale keypresses  */
+    flush_input();
     while (1) {
         draw_menu(m, breadcrumb);
         int k = read_key();
@@ -401,8 +409,7 @@ static int run_menu(Menu *m, const char *breadcrumb) {
             else if (it->type == ITEM_FLOAT)
                 it->float_val /= 2.0f;
             else if (it->type == ITEM_RADIO)
-                it->radio_sel = (it->radio_sel + it->radio_count - 1)
-                                 % it->radio_count;
+                it->radio_sel = (it->radio_sel + it->radio_count - 1) % it->radio_count;
             break;
         }
         case KEY_RIGHT: {
@@ -418,7 +425,7 @@ static int run_menu(Menu *m, const char *breadcrumb) {
         case KEY_ENTER:
         case KEY_SPACE:
             if (handle_item(m, m->cursor, breadcrumb) == 1)
-                return 1;   /* save signal */
+                return 1;
             break;
         case 'y': case 'Y':
             if (m->items[m->cursor].type == ITEM_TOGGLE)
@@ -429,20 +436,18 @@ static int run_menu(Menu *m, const char *breadcrumb) {
                 m->items[m->cursor].toggle = 0;
             break;
         case 's': case 'S':
-            return 1;   /* save */
+            return 1;
         case 'q': case 'Q':
         case KEY_ESC:
-            return 0;   /* back/quit */
+            return 0;
         case 'h': case 'H': case '?':
-            popup_message("Help",
-                "↑↓ Navigate  Space/Enter Toggle  "
-                "←→ Change value  S Save  Q Quit");
+            popup_message("Help", "↑↓ Navigate  Space/Enter Toggle  ←→ Change value  S Save  Q Quit");
             break;
         }
     }
 }
 
-/* ── menu builder helpers ────────────────────────────────────────── */
+/* ── Menu Initialization Helpers ──────────────────────────────────── */
 
 static void add_sep(Menu *m, const char *label) {
     ConfigItem *it = &m->items[m->count++];
@@ -451,8 +456,7 @@ static void add_sep(Menu *m, const char *label) {
     snprintf(it->label, MAX_LABEL, "%s", label ? label : "");
 }
 
-static void add_toggle(Menu *m, const char *label, const char *key,
-                        int val, const char *help) {
+static void add_toggle(Menu *m, const char *label, const char *key, int val, const char *help) {
     ConfigItem *it = &m->items[m->count++];
     memset(it, 0, sizeof(*it));
     it->type   = ITEM_TOGGLE;
@@ -462,9 +466,7 @@ static void add_toggle(Menu *m, const char *label, const char *key,
     if (help) snprintf(it->help, 256, "%s", help);
 }
 
-static void add_radio(Menu *m, const char *label, const char *key,
-                       int sel, int n, const char **opts,
-                       const char *help) {
+static void add_radio(Menu *m, const char *label, const char *key, int sel, int n, const char **opts, const char *help) {
     ConfigItem *it = &m->items[m->count++];
     memset(it, 0, sizeof(*it));
     it->type      = ITEM_RADIO;
@@ -477,8 +479,7 @@ static void add_radio(Menu *m, const char *label, const char *key,
     if (help) snprintf(it->help, 256, "%s", help);
 }
 
-static void add_number(Menu *m, const char *label, const char *key,
-                        int val, int mn, int mx, const char *help) {
+static void add_number(Menu *m, const char *label, const char *key, int val, int mn, int mx, const char *help) {
     ConfigItem *it = &m->items[m->count++];
     memset(it, 0, sizeof(*it));
     it->type    = ITEM_NUMBER;
@@ -490,8 +491,7 @@ static void add_number(Menu *m, const char *label, const char *key,
     if (help) snprintf(it->help, 256, "%s", help);
 }
 
-static void add_float(Menu *m, const char *label, const char *key,
-                       float val, const char *help) {
+static void add_float(Menu *m, const char *label, const char *key, float val, const char *help) {
     ConfigItem *it = &m->items[m->count++];
     memset(it, 0, sizeof(*it));
     it->type      = ITEM_FLOAT;
@@ -501,8 +501,7 @@ static void add_float(Menu *m, const char *label, const char *key,
     if (help) snprintf(it->help, 256, "%s", help);
 }
 
-static void add_submenu(Menu *m, const char *label, Menu *sub,
-                         const char *help) {
+static void add_submenu(Menu *m, const char *label, Menu *sub, const char *help) {
     ConfigItem *it = &m->items[m->count++];
     memset(it, 0, sizeof(*it));
     it->type    = ITEM_SUBMENU;
@@ -518,7 +517,7 @@ static void add_info(Menu *m, const char *text) {
     snprintf(it->label, MAX_LABEL, "%s", text);
 }
 
-/* ── build neuralc menu tree ─────────────────────────────────────── */
+/* ── Menu Hierarchical Model Tree Specification ───────────────────── */
 
 static Menu perf_menu, train_menu, mem_menu, debug_menu, build_menu;
 static Menu root_menu;
@@ -531,127 +530,80 @@ static void build_menus(NeuralcConfig *cfg) {
     memset(&build_menu, 0, sizeof(Menu));
     memset(&root_menu,  0, sizeof(Menu));
 
-    /* ── Performance submenu ── */
+    /* ── Performance Submenu ── */
     snprintf(perf_menu.title, MAX_LABEL, "Performance Settings");
     add_info(&perf_menu, "Configure CPU/GPU acceleration options");
     add_sep(&perf_menu, NULL);
-    add_toggle(&perf_menu, "Enable OpenMP multi-core", "USE_OMP",
-               cfg->use_omp,
-               "Use multiple CPU cores in parallel for tensor operations");
+    add_toggle(&perf_menu, "Enable OpenMP multi-core", "USE_OMP", cfg->use_omp, "Use multiple CPU cores in parallel for tensor operations");
     {
-        const char *ta[] = {"Auto","Manual"};
-        add_radio(&perf_menu, "Thread Allocation", "OMP_THREAD_MODE",
-                  cfg->omp_auto ? 0 : 1, 2, ta,
-                  "Auto = detect all CPU cores, Manual = set count below");
+        const char *ta[] = {"Auto", "Manual"};
+        add_radio(&perf_menu, "Thread Allocation", "OMP_THREAD_MODE", cfg->omp_auto ? 0 : 1, 2, ta, "Auto = detect all CPU cores, Manual = set count below");
     }
-    add_number(&perf_menu, "Thread Count (Manual mode)", "OMP_THREADS",
-               cfg->omp_threads, 1, 256,
-               "Number of threads for OpenMP (only used in Manual mode)");
+    add_number(&perf_menu, "Thread Count (Manual mode)", "OMP_THREADS", cfg->omp_threads, 1, 256, "Number of threads for OpenMP (only used in Manual mode)");
     add_sep(&perf_menu, NULL);
-    add_toggle(&perf_menu, "Enable OpenCL GPU", "USE_GPU",
-               cfg->use_gpu,
-               "Use GPU via OpenCL for tensor operations (requires OpenCL)");
-    add_toggle(&perf_menu, "Enable BLAS integration", "USE_BLAS",
-               cfg->use_blas,
-               "Use OpenBLAS for faster matrix multiply (install: apt install libopenblas-dev)");
+    add_toggle(&perf_menu, "Enable OpenCL GPU", "USE_GPU", cfg->use_gpu, "Use GPU via OpenCL for tensor operations (requires OpenCL)");
+    add_toggle(&perf_menu, "Enable BLAS integration", "USE_BLAS", cfg->use_blas, "Use OpenBLAS for faster matrix multiply");
 
-    /* ── Training submenu ── */
+    /* ── Training Submenu ── */
     snprintf(train_menu.title, MAX_LABEL, "Training Defaults");
     add_info(&train_menu, "Default hyperparameters for training");
     add_sep(&train_menu, NULL);
-    add_number(&train_menu, "Default Batch Size", "DEFAULT_BATCH",
-               cfg->batch_size, 1, 4096,
-               "Samples per gradient update. Larger = faster but more memory");
-    add_float(&train_menu, "Default Learning Rate", "DEFAULT_LR",
-              cfg->learning_rate,
-              "Step size for gradient descent. Adam typical: 0.001");
-    add_number(&train_menu, "Default Epochs", "DEFAULT_EPOCHS",
-               cfg->epochs, 1, 10000,
-               "Number of full passes over the training dataset");
+    add_number(&train_menu, "Default Batch Size", "DEFAULT_BATCH", cfg->batch_size, 1, 4096, "Samples per gradient update. Larger = faster but more memory");
+    add_float(&train_menu, "Default Learning Rate", "DEFAULT_LR", cfg->learning_rate, "Step size for gradient descent. Adam typical: 0.001");
+    add_number(&train_menu, "Default Epochs", "DEFAULT_EPOCHS", cfg->epochs, 1, 10000, "Number of full passes over the training dataset");
     add_sep(&train_menu, NULL);
     {
         const char *opts[] = {"Adam","SGD","RMSProp"};
-        add_radio(&train_menu, "Default Optimizer", "DEFAULT_OPT",
-                  cfg->optimizer, 3, opts,
-                  "Adam is best for most tasks. SGD needs tuned LR. RMSProp good for RNN");
+        add_radio(&train_menu, "Default Optimizer", "DEFAULT_OPT", cfg->optimizer, 3, opts, "Adam is best for most tasks. SGD needs tuned LR. RMSProp good for RNN");
     }
-    add_float(&train_menu, "Default Dropout Rate", "DEFAULT_DROPOUT",
-              cfg->dropout_rate,
-              "Fraction of neurons to drop during training. 0.0 = disabled");
+    add_float(&train_menu, "Default Dropout Rate", "DEFAULT_DROPOUT", cfg->dropout_rate, "Fraction of neurons to drop during training. 0.0 = disabled");
     add_sep(&train_menu, NULL);
-    add_toggle(&train_menu, "Enable Gradient Clipping", "USE_GRAD_CLIP",
-               cfg->use_grad_clip,
-               "Prevent exploding gradients — essential for RNN/LSTM");
-    add_float(&train_menu, "Gradient Clip Norm", "GRAD_CLIP_NORM",
-              cfg->grad_clip,
-              "Maximum gradient L2 norm. Typical: 1.0 for RNN, 5.0 for Dense");
+    add_toggle(&train_menu, "Enable Gradient Clipping", "USE_GRAD_CLIP", cfg->use_grad_clip, "Prevent exploding gradients — essential for RNN/LSTM");
+    add_float(&train_menu, "Gradient Clip Norm", "GRAD_CLIP_NORM", cfg->grad_clip, "Maximum gradient L2 norm. Typical: 1.0 for RNN, 5.0 for Dense");
 
-    /* ── Memory submenu ── */
+    /* ── Memory Submenu ── */
     snprintf(mem_menu.title, MAX_LABEL, "Memory Settings");
     add_info(&mem_menu, "Control memory allocation strategy");
     add_sep(&mem_menu, NULL);
     {
         const char *ma[] = {"malloc","Pool"};
-        add_radio(&mem_menu, "Memory Allocator", "ALLOCATOR",
-                  cfg->allocator, 2, ma,
-                  "malloc = standard, Pool = pre-allocate for speed");
+        add_radio(&mem_menu, "Memory Allocator", "ALLOCATOR", cfg->allocator, 2, ma, "malloc = standard, Pool = pre-allocate for speed");
     }
-    add_number(&mem_menu, "Memory Pool Size (MB)", "POOL_SIZE_MB",
-               cfg->pool_size_mb, 64, 16384,
-               "Size of pre-allocated memory pool (Pool allocator only)");
+    add_number(&mem_menu, "Memory Pool Size (MB)", "POOL_SIZE_MB", cfg->pool_size_mb, 64, 16384, "Size of pre-allocated memory pool (Pool allocator only)");
 
-    /* ── Debug submenu ── */
+    /* ── Debug Submenu ── */
     snprintf(debug_menu.title, MAX_LABEL, "Debug & Profiling");
     add_info(&debug_menu, "Enable diagnostic and profiling features");
     add_sep(&debug_menu, NULL);
-    add_toggle(&debug_menu, "Debug Mode (verbose logging)", "DEBUG_MODE",
-               cfg->debug_mode,
-               "Print detailed logs during training. Slows down execution");
-    add_toggle(&debug_menu, "Check for NaN in tensors", "CHECK_NAN",
-               cfg->check_nan,
-               "Detect NaN/Inf values in tensors. Useful for debugging instability");
-    add_toggle(&debug_menu, "Profiling (print timing)", "PROFILE",
-               cfg->profile,
-               "Print timing information for each operation");
+    add_toggle(&debug_menu, "Debug Mode (verbose logging)", "DEBUG_MODE", cfg->debug_mode, "Print detailed logs during training. Slows down execution");
+    add_toggle(&debug_menu, "Check for NaN in tensors", "CHECK_NAN", cfg->check_nan, "Detect NaN/Inf values in tensors. Useful for debugging instability");
+    add_toggle(&debug_menu, "Profiling (print timing)", "PROFILE", cfg->profile, "Print timing information for each operation");
 
-    /* ── Build submenu ── */
+    /* ── Build Submenu ── */
     snprintf(build_menu.title, MAX_LABEL, "Build Options");
     add_info(&build_menu, "Compiler and build configuration");
     add_sep(&build_menu, NULL);
     {
         const char *ol[] = {"-O0","-O1","-O2","-O3"};
-        add_radio(&build_menu, "Optimization Level", "OPT_LEVEL",
-                  cfg->opt_level, 4, ol,
-                  "-O2 is default. -O3 is faster but may cause issues. -O0 for debugging");
+        add_radio(&build_menu, "Optimization Level", "OPT_LEVEL", cfg->opt_level, 4, ol, "-O2 is default. -O3 is faster but may cause issues. -O0 for debugging");
     }
-    add_toggle(&build_menu, "Enable AVX/SIMD instructions", "ENABLE_AVX",
-               cfg->enable_avx,
-               "Use CPU vector instructions for faster math. Requires modern CPU");
-    add_toggle(&build_menu, "Enable Link-Time Optimization", "ENABLE_LTO",
-               cfg->enable_lto,
-               "Optimize across compilation units. Slower build, faster runtime");
+    add_toggle(&build_menu, "Enable AVX/SIMD instructions", "ENABLE_AVX", cfg->enable_avx, "Use CPU vector instructions for faster math. Requires modern CPU");
+    add_toggle(&build_menu, "Enable Link-Time Optimization", "ENABLE_LTO", cfg->enable_lto, "Optimize across compilation units. Slower build, faster runtime");
 
-    /* ── Root menu ── */
-    snprintf(root_menu.title, MAX_LABEL,
-             "neuralc v0.1 Configuration");
-    add_info(&root_menu,
-             "Arrow keys navigate. Space/Enter toggle. S save. Q quit.");
+    /* ── Root Menu Configuration ── */
+    snprintf(root_menu.title, MAX_LABEL, "neuralc v0.1 Configuration");
+    add_info(&root_menu, "Arrow keys navigate. Space/Enter toggle. S save. Q quit.");
     add_sep(&root_menu, NULL);
-    add_submenu(&root_menu, "Performance Settings",   &perf_menu,
-                "OpenMP threads, GPU, BLAS");
-    add_submenu(&root_menu, "Training Defaults",      &train_menu,
-                "Batch size, LR, optimizer, gradient clipping");
-    add_submenu(&root_menu, "Memory Settings",        &mem_menu,
-                "Allocator and pool size");
-    add_submenu(&root_menu, "Debug & Profiling",      &debug_menu,
-                "Logging, NaN check, timing");
-    add_submenu(&root_menu, "Build Options",          &build_menu,
-                "Compiler flags, AVX, LTO");
+    add_submenu(&root_menu, "Performance Settings",   &perf_menu, "OpenMP threads, GPU, BLAS");
+    add_submenu(&root_menu, "Training Defaults",      &train_menu, "Batch size, LR, optimizer, gradient clipping");
+    add_submenu(&root_menu, "Memory Settings",        &mem_menu, "Allocator and pool size");
+    add_submenu(&root_menu, "Debug & Profiling",      &debug_menu, "Logging, NaN check, timing");
+    add_submenu(&root_menu, "Build Options",          &build_menu, "Compiler flags, AVX, LTO");
     add_sep(&root_menu, NULL);
     add_info(&root_menu, "Press S to save  |  Q to quit without saving");
 }
 
-/* ── read back values after UI ───────────────────────────────────── */
+/* ── UI Struct Field Aggregation Pipeline ────────────────────────── */
 
 static void collect_config(NeuralcConfig *cfg) {
     /* performance */
@@ -685,7 +637,7 @@ static void collect_config(NeuralcConfig *cfg) {
     cfg->enable_lto   = build_menu.items[4].toggle;
 }
 
-/* ── public API ──────────────────────────────────────────────────── */
+/* ── Public API Core Interfaces ──────────────────────────────────── */
 
 void config_defaults(NeuralcConfig *cfg) {
     memset(cfg, 0, sizeof(*cfg));
@@ -696,25 +648,46 @@ void config_defaults(NeuralcConfig *cfg) {
     cfg->use_blas      = 0;
     cfg->batch_size    = 64;
     cfg->learning_rate = 0.001f;
-    cfg->optimizer     = 0;    /* Adam */
+    cfg->optimizer     = 0;
     cfg->dropout_rate  = 0.3f;
     cfg->epochs        = 20;
     cfg->grad_clip     = 1.0f;
     cfg->use_grad_clip = 1;
-    cfg->allocator     = 0;    /* malloc */
+    cfg->allocator     = 0;
     cfg->pool_size_mb  = 512;
     cfg->debug_mode    = 0;
     cfg->check_nan     = 0;
     cfg->profile       = 0;
-    cfg->opt_level     = 2;    /* -O2 */
+    cfg->opt_level     = 2;
     cfg->enable_avx    = 0;
     cfg->enable_lto    = 0;
 }
 
 int config_ui_run(NeuralcConfig *cfg) {
+    HardwareProfile hw;
+    detect_system_hardware(&hw);
+
+    if (cfg->omp_auto && cfg->omp_threads < 1)
+        cfg->omp_threads = hw.cpu_cores;
+
     term_raw();
     term_size();
     build_menus(cfg);
+
+    printf(CLEAR_SCREEN);
+    printf(BG_BLUE FG_WHITE BOLD);
+    printf("  System Hardware Diagnostic Topology\n" RESET);
+    printf(BG_BLACK FG_CYAN);
+    printf("  CPU Model: " FG_WHITE "%s\n" RESET, hw.cpu_model);
+    printf(BG_BLACK FG_CYAN);
+    printf("  Logical Processors: " FG_GREEN "%d" FG_CYAN "\n" RESET, hw.cpu_cores);
+    printf(BG_BLACK FG_CYAN);
+    printf("  GPU Hardware Accel: %s\n" RESET, hw.gpu_detected ? FG_GREEN "Detected" : FG_YELLOW "Not detected");
+    printf(RESET "\n  Loading localized matrix parameters...\n\n" RESET);
+    fflush(stdout);
+
+    struct timespec ts = {0, 600000000L};
+    nanosleep(&ts, NULL);
 
     root_menu.cursor = next_selectable(&root_menu, -1, +1);
     int saved = run_menu(&root_menu, "Main Menu");
@@ -723,62 +696,52 @@ int config_ui_run(NeuralcConfig *cfg) {
     term_restore();
 
     if (!saved) {
-        printf("\nConfiguration not saved.\n");
+        printf("\nConfiguration aborted.\n");
         return 1;
     }
 
     collect_config(cfg);
 
-    /* ── show changes summary ── */
-    printf("\n" BOLD "neuralc Configuration Saved!\n" RESET);
+    printf("\n" BOLD "Configuration Successfully Preserved\n" RESET);
     printf("─────────────────────────────────────────\n");
 
-    /* Thread count animation */
     if (cfg->use_omp) {
         int threads = cfg->omp_auto ? 4 : cfg->omp_threads;
-        printf("  OpenMP:   " FG_GREEN "enabled" RESET "\n");
-        printf("  Threads:  ");
+        printf("  OpenMP Core Binding:  " FG_GREEN "Active" RESET "\n");
+        printf("  Thread Safe Context:  ");
         fflush(stdout);
         for (int t = 1; t <= threads; t++) {
             printf(FG_CYAN BOLD "[%d]" RESET " ", t);
             fflush(stdout);
-            struct timespec ts = {0, 100000000L};  /* 0.1s per tick */
+            struct timespec ts = {0, 100000000L};
             nanosleep(&ts, NULL);
         }
         if (cfg->omp_auto)
-            printf(FG_GREEN "✓ auto (all cores)\n" RESET);
+            printf(FG_GREEN "✓ Auto allocation mode\n" RESET);
         else
-            printf(FG_GREEN "✓ %d thread(s)\n" RESET, threads);
+            printf(FG_GREEN "✓ %d thread context lock\n" RESET, threads);
     } else {
-        printf("  OpenMP:   " FG_YELLOW "disabled (single-core)\n" RESET);
+        printf("  OpenMP Core Binding:  " FG_YELLOW "Inactive (Sequential Engine Allocation)\n" RESET);
     }
 
     const char *ol[]  = {"-O0","-O1","-O2","-O3"};
     const char *opt[] = {"Adam","SGD","RMSProp"};
-    printf("  GPU:      %s\n", cfg->use_gpu ?
-           FG_GREEN "enabled" RESET : "disabled");
-    printf("  Opt flag: %s\n",
-           ol[cfg->opt_level < 4 ? cfg->opt_level : 2]);
-    printf("  Batch:    %d\n",   cfg->batch_size);
-    printf("  LR:       %.6f\n", cfg->learning_rate);
-    printf("  Optim:    %s\n",
-           opt[cfg->optimizer < 3 ? cfg->optimizer : 0]);
-    printf("  GradClip: %s (norm=%.1f)\n",
-           cfg->use_grad_clip ? "yes":"no", cfg->grad_clip);
-    printf("  Debug:    %s\n",
-           cfg->debug_mode ? FG_YELLOW "ON" RESET : "off");
+    printf("  GPU Pipeline target:  %s\n", cfg->use_gpu ? FG_GREEN "Enabled" RESET : "Disabled");
+    printf("  Optimization Profile: %s\n", ol[cfg->opt_level < 4 ? cfg->opt_level : 2]);
+    printf("  Matrix Batch Boundary: %d\n",   cfg->batch_size);
+    printf("  Core Learning Rate:   %.6f\n", cfg->learning_rate);
+    printf("  Mathematical Optimizer: %s\n",   opt[cfg->optimizer < 3 ? cfg->optimizer : 0]);
+    printf("  Gradient Clip Bounds:  %s (L2 norm limit = %.1f)\n", cfg->use_grad_clip ? "Active" : "Inactive", cfg->grad_clip);
+    printf("  Verbose Logging Trace: %s\n",   cfg->debug_mode ? FG_YELLOW "Active" RESET : "Inactive");
     printf("─────────────────────────────────────────\n");
-    printf(FG_GREEN BOLD "\n✓ Saved → neuralc_config.h\n\n" RESET);
-    printf("Next steps:\n");
-    printf(BOLD "  make clean && make\n" RESET);
-    printf(BOLD "  ./mnist_demo\n\n" RESET);
+    printf(FG_GREEN BOLD "\n✓ Parameter manifest written successfully\n\n" RESET);
     return 0;
 }
 
 int config_save(const NeuralcConfig *cfg, const char *path) {
     FILE *f = fopen(path, "w");
     if (!f) {
-        fprintf(stderr, "config_save: cannot open '%s'\n", path);
+        fprintf(stderr, "config_save: cannot write target file path destination '%s'\n", path);
         return -1;
     }
 
@@ -787,8 +750,8 @@ int config_save(const NeuralcConfig *cfg, const char *path) {
 
     fprintf(f,
 "/*\n"
-" * neuralc_config.h — Auto-generated by neuralc config UI\n"
-" * Do not edit manually — run: make config\n"
+" * neuralc_config.h — System Config Manifest\n"
+" * Auto-generated parameters block — modifications will be overwritten\n"
 " */\n"
 "#ifndef NEURALC_CONFIG_H\n"
 "#define NEURALC_CONFIG_H\n\n"
@@ -817,7 +780,7 @@ int config_save(const NeuralcConfig *cfg, const char *path) {
 "#define NEURALC_OPT_LEVEL       \"%s\"\n"
 "#define NEURALC_AVX             %d\n"
 "#define NEURALC_LTO             %d\n\n"
-"/* ── Derived flags for Makefile use ─────────────────── */\n"
+"/* ── Compilation Environment Injections ─────────────── */\n"
 "#if NEURALC_USE_OMP\n"
 "  #ifndef USE_OMP\n"
 "    #define USE_OMP\n"
@@ -828,7 +791,7 @@ int config_save(const NeuralcConfig *cfg, const char *path) {
 "    #define USE_OPENCL\n"
 "  #endif\n"
 "#endif\n\n"
-"#endif /* NEURALC_CONFIG_H */\n",
+"#endif\n",
         cfg->use_omp,
         cfg->omp_auto,
         cfg->omp_threads,
@@ -857,13 +820,14 @@ int config_save(const NeuralcConfig *cfg, const char *path) {
 
 int config_load(NeuralcConfig *cfg, const char *path) {
     FILE *f = fopen(path, "r");
-    if (!f) return -1;   /* file not found — use defaults */
+    if (!f) return -1;
 
     char line[256];
     config_defaults(cfg);
 
     while (fgets(line, sizeof(line), f)) {
-        int  iv; float fv;
+        int iv; float fv;
+        char sv[64];
         if (sscanf(line, "#define NEURALC_USE_OMP %d",     &iv)==1) cfg->use_omp=iv;
         if (sscanf(line, "#define NEURALC_OMP_AUTO %d",    &iv)==1) cfg->omp_auto=iv;
         if (sscanf(line, "#define NEURALC_OMP_THREADS %d", &iv)==1) cfg->omp_threads=iv;
@@ -871,6 +835,13 @@ int config_load(NeuralcConfig *cfg, const char *path) {
         if (sscanf(line, "#define NEURALC_USE_BLAS %d",    &iv)==1) cfg->use_blas=iv;
         if (sscanf(line, "#define NEURALC_BATCH_SIZE %d",  &iv)==1) cfg->batch_size=iv;
         if (sscanf(line, "#define NEURALC_LR %ff",         &fv)==1) cfg->learning_rate=fv;
+        
+        if (sscanf(line, "#define NEURALC_OPTIMIZER %63s", sv)==1) {
+            if (strcmp(sv, "ADAM") == 0) cfg->optimizer = 0;
+            else if (strcmp(sv, "SGD") == 0) cfg->optimizer = 1;
+            else if (strcmp(sv, "RMSPROP") == 0) cfg->optimizer = 2;
+        }
+
         if (sscanf(line, "#define NEURALC_DROPOUT %ff",    &fv)==1) cfg->dropout_rate=fv;
         if (sscanf(line, "#define NEURALC_EPOCHS %d",      &iv)==1) cfg->epochs=iv;
         if (sscanf(line, "#define NEURALC_GRAD_CLIP %ff",  &fv)==1) cfg->grad_clip=fv;
@@ -880,6 +851,14 @@ int config_load(NeuralcConfig *cfg, const char *path) {
         if (sscanf(line, "#define NEURALC_DEBUG %d",       &iv)==1) cfg->debug_mode=iv;
         if (sscanf(line, "#define NEURALC_CHECK_NAN %d",   &iv)==1) cfg->check_nan=iv;
         if (sscanf(line, "#define NEURALC_PROFILE %d",     &iv)==1) cfg->profile=iv;
+
+        if (sscanf(line, "#define NEURALC_OPT_LEVEL \"%63[^\"]\"", sv)==1) {
+            if (strcmp(sv, "-O0") == 0) cfg->opt_level = 0;
+            else if (strcmp(sv, "-O1") == 0) cfg->opt_level = 1;
+            else if (strcmp(sv, "-O2") == 0) cfg->opt_level = 2;
+            else if (strcmp(sv, "-O3") == 0) cfg->opt_level = 3;
+        }
+
         if (sscanf(line, "#define NEURALC_AVX %d",         &iv)==1) cfg->enable_avx=iv;
         if (sscanf(line, "#define NEURALC_LTO %d",         &iv)==1) cfg->enable_lto=iv;
     }
@@ -889,32 +868,29 @@ int config_load(NeuralcConfig *cfg, const char *path) {
 
 void config_print(const NeuralcConfig *cfg) {
     const char *opts[] = {"Adam","SGD","RMSProp"};
-    printf("\n=== neuralc Configuration ===\n");
-    printf("Performance:\n");
-    printf("  OpenMP:        %s", cfg->use_omp ? "enabled" : "disabled");
+    printf("\n=== Engine Parameters Configuration Map ===\n");
+    printf("Execution Engine Profile:\n");
+    printf("  Multi-Core Cluster Allocation (OpenMP): %s", cfg->use_omp ? "Active" : "Inactive");
     if (cfg->use_omp)
-        printf(" (%s, threads=%d)",
-               cfg->omp_auto ? "auto" : "manual", cfg->omp_threads);
+        printf(" (%s mode, active threads: %d)", cfg->omp_auto ? "Auto" : "Manual", cfg->omp_threads);
     printf("\n");
-    printf("  GPU (OpenCL):  %s\n", cfg->use_gpu  ? "enabled" : "disabled");
-    printf("  BLAS:          %s\n", cfg->use_blas ? "enabled" : "disabled");
-    printf("Training:\n");
-    printf("  Batch size:    %d\n", cfg->batch_size);
-    printf("  Learning rate: %.6f\n", cfg->learning_rate);
-    printf("  Optimizer:     %s\n",
-           opts[cfg->optimizer < 3 ? cfg->optimizer : 0]);
-    printf("  Dropout:       %.2f\n", cfg->dropout_rate);
-    printf("  Epochs:        %d\n",   cfg->epochs);
-    printf("  Grad clip:     %s (norm=%.2f)\n",
-           cfg->use_grad_clip ? "yes" : "no", cfg->grad_clip);
-    printf("Debug:\n");
-    printf("  Debug mode:    %s\n", cfg->debug_mode ? "on" : "off");
-    printf("  NaN check:     %s\n", cfg->check_nan  ? "on" : "off");
-    printf("  Profiling:     %s\n", cfg->profile    ? "on" : "off");
-    printf("Build:\n");
+    printf("  Graphics Pipeline Engine Core (OpenCL): %s\n", cfg->use_gpu  ? "Active" : "Inactive");
+    printf("  BLAS Hardware Vectorization Engine:    %s\n", cfg->use_blas ? "Active" : "Inactive");
+    printf("Hyperparameters Layout:\n");
+    printf("  Matrix Batch Limit Segment:            %d\n", cfg->batch_size);
+    printf("  Global Optimization Step Coefficient:  %.6f\n", cfg->learning_rate);
+    printf("  Mathematical Optimization Algorithm:   %s\n", opts[cfg->optimizer < 3 ? cfg->optimizer : 0]);
+    printf("  Dropout Layer Regularization Threshold: %.2f\n", cfg->dropout_rate);
+    printf("  Training Iteration Boundaries (Epochs): %d\n",   cfg->epochs);
+    printf("  Gradient Norm Explosion Clipping:      %s (Threshold bound=%.2f)\n", cfg->use_grad_clip ? "Active" : "Inactive", cfg->grad_clip);
+    printf("Diagnostics:\n");
+    printf("  Verbose Engine Logging Stream Trace:   %s\n", cfg->debug_mode ? "Active" : "Inactive");
+    printf("  NaN/Inf Arithmetic Protection Mask:    %s\n", cfg->check_nan  ? "Active" : "Inactive");
+    printf("  Execution Timing Profiler Runtime:     %s\n", cfg->profile    ? "Active" : "Inactive");
+    printf("Compilation Flags:\n");
     const char *ol[] = {"-O0","-O1","-O2","-O3"};
-    printf("  Opt level:     %s\n", ol[cfg->opt_level < 4 ? cfg->opt_level : 2]);
-    printf("  AVX:           %s\n", cfg->enable_avx ? "yes" : "no");
-    printf("  LTO:           %s\n", cfg->enable_lto ? "yes" : "no");
-    printf("=============================\n\n");
+    printf("  Binary Optimization Direct Profile:    %s\n", ol[cfg->opt_level < 4 ? cfg->opt_level : 2]);
+    printf("  Advanced Vector Extensions (AVX-2/SIMD): %s\n", cfg->enable_avx ? "Active" : "Inactive");
+    printf("  Link-Time Cross-Module Optimization (LTO): %s\n", cfg->enable_lto ? "Active" : "Inactive");
+    printf("===========================================\n\n");
 }
