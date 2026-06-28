@@ -2,13 +2,6 @@
 #define CONFIG_UI_H
 
 /*
- * config_ui.h — neuralc kernel-style configuration UI
- *
- * Merged output from AI Team:
- *   ChatGPT  → HardwareProfile architecture + API design
- *   Claude   → Clean implementation
- *   Gemini   → Core oversubscription protection + pitfall fixes
- *
  * Terminal UI similar to Linux menuconfig.
  * Uses ANSI escape codes + termios — zero external dependencies.
  *
