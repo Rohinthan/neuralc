@@ -2,6 +2,9 @@
 #define CONFIG_UI_H
 
 /*
+ *
+ * config_ui.h — neuralc kernel-style configuration UI
+ *
  * Terminal UI similar to Linux menuconfig.
  * Uses ANSI escape codes + termios — zero external dependencies.
  *
