@@ -1,78 +1,92 @@
--/*
- * src/neuralc_init.c — Auto-apply neuralc_config.h settings at startup
- *
- * This file reads neuralc_config.h and applies settings
- * automatically when any neuralc program starts.
+/*
+ * neuralc_init.c — Runtime initialization
+ * Called automatically before main() via __attribute__((constructor)).
+ * No user code changes needed.
  */
 
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
-/*
- * Only attempt inclusion if NEURALC_HAS_CONFIG flag was injected by the Makefile */
 #ifdef NEURALC_HAS_CONFIG
-  #include "neuralc_config.h"
+#include "neuralc_config.h"
 #endif
 
 #ifdef USE_OMP
-  #include <omp.h>
+#include <omp.h>
 #endif
 
-/*
- * neuralc_init — applies setup attributes at runtime
- */
 void neuralc_init(void) {
+
+    /* ── detect real CPU core count (ChatGPT + Gemini) ── */
+    long hw_cores = sysconf(_SC_NPROCESSORS_ONLN);
+    /* Gemini: clamp — sysconf returns -1 on error */
+    int max_cores = (hw_cores > 0) ? (int)hw_cores : 1;
+
 #ifdef USE_OMP
+    int target_threads = max_cores;  /* default: use all cores */
+    int mode_auto      = 1;
+    (void)mode_auto;  /* used in debug print only */
 
 #ifdef NEURALC_HAS_CONFIG
-    /* Safely fall back if variables are missing from an old header format */
-    #ifdef NEURALC_USE_OMP
-    if (NEURALC_USE_OMP) {
-        #ifdef NEURALC_OMP_AUTO
-        if (NEURALC_OMP_AUTO) {
-            int cores = omp_get_max_threads();
-            omp_set_num_threads(cores);
-        } else {
-            #ifdef NEURALC_OMP_THREADS
-            omp_set_num_threads(NEURALC_OMP_THREADS);
-            #endif
-        }
-        #endif
+    if (!NEURALC_USE_OMP) {
+        /* OpenMP disabled in config — single threaded */
+        target_threads = 1;
+        mode_auto      = 0;
+    } else if (!NEURALC_OMP_AUTO) {
+        /* Manual mode — use configured thread count */
+        target_threads = NEURALC_OMP_THREADS;
+        mode_auto      = 0;
     }
-    #endif
+    /* else: Auto mode — target_threads stays as max_cores */
 #else
-    /* Safe fallback if no config file has been generated yet */
+    /* No config file — check environment variable */
     const char *env = getenv("OMP_NUM_THREADS");
     if (env) {
-        int t = atoi(env);
-        if (t > 0) omp_set_num_threads(t);
+        int parsed = atoi(env);
+        if (parsed > 0) {
+            target_threads = parsed;
+            mode_auto      = 0;
+        }
+    }
+#endif
+
+    /*
+     * core oversubscription guard
+     * Never spawn more threads than physical cores available.
+     * Spawning 16 threads on a 4-core CPU causes context switching
+     * overhead that SLOWS DOWN training instead of speeding it up.
+     */
+    if (target_threads > max_cores) {
+        target_threads = max_cores;
+    }
+    if (target_threads < 1) target_threads = 1;
+
+    omp_set_num_threads(target_threads);
+
+#ifdef NEURALC_HAS_CONFIG
+    if (NEURALC_DEBUG) {
+        printf("\n[neuralc] === Runtime Initialization ===\n");
+        printf("[neuralc] CPU cores available : %d\n", max_cores);
+        printf("[neuralc] OpenMP threads set  : %d (%s mode)\n",
+               target_threads, mode_auto ? "AUTO" : "MANUAL");
+#ifdef USE_OPENCL
+        printf("[neuralc] GPU backend         : OpenCL enabled\n");
+#else
+        printf("[neuralc] GPU backend         : CPU only\n");
+#endif
+        printf("[neuralc] =======================================\n\n");
     }
 #endif /* NEURALC_HAS_CONFIG */
 
-#ifdef NEURALC_HAS_CONFIG
-    #if defined(NEURALC_DEBUG) && defined(NEURALC_OMP_AUTO)
-    if (NEURALC_DEBUG) {
-        int threads = omp_get_max_threads();
-        printf("[neuralc] OpenMP: %d thread(s) — %s mode\n",
-               threads,
-               NEURALC_OMP_AUTO ? "auto" : "manual");
-    }
-    #endif
-#endif
-
 #endif /* USE_OMP */
-
-#ifdef NEURALC_HAS_CONFIG
-    #ifdef NEURALC_DEBUG
-    if (NEURALC_DEBUG) {
-        printf("[neuralc] Debug mode ON\n");
-    }
-    #endif
-#endif
 }
 
 /*
- * Auto-execute initialization prior to main entry point
+ * __attribute__((constructor)) — GCC/Clang auto-call before main()
+ * Same pattern used by PyTorch's ATen backend initialization.
+ * note: this mimics torch.get_num_threads() hook behavior.
  */
 #ifdef __GNUC__
 __attribute__((constructor))
