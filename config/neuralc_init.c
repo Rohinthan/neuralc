@@ -1,4 +1,4 @@
-/*
+-/*
  * src/neuralc_init.c — Auto-apply neuralc_config.h settings at startup
  *
  * This file reads neuralc_config.h and applies settings
@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* ── CLAUDE SAFE INCLUDE FIX ── 
+/*
  * Only attempt inclusion if NEURALC_HAS_CONFIG flag was injected by the Makefile */
 #ifdef NEURALC_HAS_CONFIG
   #include "neuralc_config.h"
