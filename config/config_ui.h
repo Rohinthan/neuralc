@@ -4,119 +4,128 @@
 /*
  * config_ui.h — neuralc kernel-style configuration UI
  *
+ * Merged output from AI Team:
+ *   ChatGPT  → HardwareProfile architecture + API design
+ *   Claude   → Clean implementation
+ *   Gemini   → Core oversubscription protection + pitfall fixes
+ *
  * Terminal UI similar to Linux menuconfig.
  * Uses ANSI escape codes + termios — zero external dependencies.
  *
  * Usage:
- *   make config
- *   ./neuralc_config
+ *   make config     (builds + auto-runs menuconfig)
  *
  * Generates: neuralc_config.h
  *
  * Navigation:
- *   ↑ ↓        — move between options
- *   Enter       — select / enter submenu
- *   Space       — toggle checkbox
- *   Y           — enable  [*]
- *   N           — disable [ ]
- *   S           — save config
- *   Q / Esc     — go back / quit
- *   H           — help
+ *   ↑ ↓    — move between options
+ *   Enter  — select / enter submenu
+ *   Space  — toggle checkbox
+ *   Y / N  — enable / disable
+ *   S      — save config
+ *   Q/Esc  — back / quit
+ *   H      — help
  */
+
+#include <stddef.h>
+
+/* ── Hardware Profile ────────────────────── */
+/*
+ * Detected at startup by detect_system_hardware().
+ * Used to set smart defaults in the config UI
+ * (e.g. auto-fill thread count with actual CPU cores).
+ */
+typedef struct {
+    int  cpu_cores;        /* logical CPU cores via sysconf()    */
+    char cpu_model[128];   /* from /proc/cpuinfo "model name"    */
+    int  gpu_detected;     /* 1 if DRM/DRI device found          */
+    char gpu_name[128];    /* GPU device path or name            */
+} HardwareProfile;
 
 /* ── item types ─────────────────────────────────────────────────── */
 typedef enum {
-    ITEM_TOGGLE,      /* [*] / [ ]  on/off checkbox          */
-    ITEM_RADIO,       /* (*) / ( )  one of N choices         */
-    ITEM_NUMBER,      /* integer value                        */
-    ITEM_FLOAT,       /* float value                          */
-    ITEM_SUBMENU,     /* ---> opens child menu               */
-    ITEM_SEPARATOR,   /* ─────── visual divider              */
-    ITEM_INFO,        /* read-only info line                  */
+    ITEM_TOGGLE,    /* [*] / [ ]  on/off checkbox       */
+    ITEM_RADIO,     /* (*) / ( )  one of N choices      */
+    ITEM_NUMBER,    /* integer value                     */
+    ITEM_FLOAT,     /* float value                       */
+    ITEM_SUBMENU,   /* ---> opens child menu            */
+    ITEM_SEPARATOR, /* ─────── visual divider           */
+    ITEM_INFO,      /* read-only info line               */
 } ItemType;
 
-#define MAX_ITEMS     64
-#define MAX_CHILDREN  32
-#define MAX_LABEL     80
-#define MAX_MENUS     16
+#define MAX_ITEMS   64
+#define MAX_LABEL   80
 
 /* ── single config item ─────────────────────────────────────────── */
 typedef struct ConfigItem {
     ItemType    type;
-    char        label[MAX_LABEL];   /* display name                */
-    char        key[64];            /* config key e.g. OMP_THREADS */
-    char        help[256];          /* help text shown at bottom   */
-
-    /* values */
-    int         toggle;             /* 0 or 1 for TOGGLE           */
-    int         radio_sel;          /* selected index for RADIO    */
-    char        radio_opts[8][32];  /* option labels for RADIO     */
+    char        label[MAX_LABEL];
+    char        key[64];
+    char        help[256];
+    int         toggle;
+    int         radio_sel;
+    char        radio_opts[8][32];
     int         radio_count;
-    int         num_val;            /* integer value               */
+    int         num_val;
     int         num_min, num_max;
-    float       float_val;          /* float value                 */
-
-    /* submenu */
-    struct Menu *submenu;           /* pointer to child menu       */
+    float       float_val;
+    struct Menu *submenu;
 } ConfigItem;
 
-/* ── menu (a screen of items) ───────────────────────────────────── */
+/* ── menu ───────────────────────────────────────────────────────── */
 typedef struct Menu {
-    char        title[MAX_LABEL];
-    ConfigItem  items[MAX_ITEMS];
-    int         count;
-    int         cursor;             /* currently highlighted row   */
-    int         scroll;             /* top visible row             */
+    char       title[MAX_LABEL];
+    ConfigItem items[MAX_ITEMS];
+    int        count;
+    int        cursor;
+    int        scroll;
 } Menu;
 
-/* ── global config state ────────────────────────────────────────── */
+/* ── NeuralcConfig ──────────────────── */
 typedef struct {
-    /* ── Performance ── */
-    int   use_omp;          /* OpenMP multi-core            */
-    int   omp_threads;      /* 0 = auto, else manual count  */
-    int   omp_auto;         /* 1 = auto-detect cores        */
-    int   use_gpu;          /* OpenCL GPU                   */
-    int   use_blas;         /* BLAS integration             */
+    /* Performance */
+    int   use_omp;
+    int   omp_auto;
+    int   omp_threads;
+    int   use_gpu;
+    int   use_blas;
 
-    /* ── Training defaults ── */
-    int   batch_size;       /* default batch size           */
-    float learning_rate;    /* default LR                   */
-    int   optimizer;        /* 0=Adam 1=SGD 2=RMSProp       */
-    float dropout_rate;     /* default dropout              */
-    int   epochs;           /* default epochs               */
-    float grad_clip;        /* gradient clip norm           */
-    int   use_grad_clip;    /* enable gradient clipping     */
+    /* Training */
+    int   batch_size;
+    float learning_rate;
+    int   optimizer;       /* 0=Adam 1=SGD 2=RMSProp */
+    float dropout_rate;
+    int   epochs;
+    int   use_grad_clip;
+    float grad_clip;
 
-    /* ── Memory ── */
-    int   allocator;        /* 0=malloc 1=pool              */
-    int   pool_size_mb;     /* memory pool size in MB       */
+    /* Memory */
+    int   allocator;
+    int   pool_size_mb;
 
-    /* ── Debug ── */
-    int   debug_mode;       /* verbose logging              */
-    int   check_nan;        /* check for NaN in tensors     */
-    int   profile;          /* print timing info            */
+    /* Debug */
+    int   debug_mode;
+    int   check_nan;
+    int   profile;
 
-    /* ── Build ── */
-    int   opt_level;        /* 0=O0 1=O1 2=O2 3=O3         */
-    int   enable_avx;       /* AVX/SIMD instructions        */
-    int   enable_lto;       /* link-time optimization       */
+    /* Build */
+    int   opt_level;
+    int   enable_avx;
+    int   enable_lto;
 } NeuralcConfig;
 
 /* ── API ────────────────────────────────────────────────────────── */
 
-/* Run the interactive config UI. Returns 0 if saved, 1 if quit. */
-int  config_ui_run(NeuralcConfig *cfg);
+/* Hardware detection  */
+void detect_system_hardware(HardwareProfile *prof);
 
-/* Load config from neuralc_config.h (if exists) */
+/* Config lifecycle */
+void config_defaults(NeuralcConfig *cfg);
 int  config_load(NeuralcConfig *cfg, const char *path);
-
-/* Save config to neuralc_config.h */
 int  config_save(const NeuralcConfig *cfg, const char *path);
-
-/* Print current config summary */
 void config_print(const NeuralcConfig *cfg);
 
-/* Initialize config with sensible defaults */
-void config_defaults(NeuralcConfig *cfg);
+/* Run interactive UI — returns 0 if saved, 1 if quit */
+int  config_ui_run(NeuralcConfig *cfg);
 
 #endif /* CONFIG_UI_H */
