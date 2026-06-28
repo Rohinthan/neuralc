@@ -1,6 +1,7 @@
 CC      = gcc
 CFLAGS  = -O2 -Wall -Wextra -std=c11
-CFLAGS += -I include/          # tell compiler where .h files are
+CFLAGS += -I include/     # finds all headers in include/
+CFLAGS += -I config/      # finds config_ui.h and neuralc_init.h
 LDFLAGS = -lm
 
 # ── auto-load neuralc_config.h if it exists ───────────────────────
@@ -23,26 +24,25 @@ ifneq (,$(wildcard neuralc_config.h))
   $(info [neuralc] Config loaded — OMP=$(NEURALC_USE_OMP) GPU=$(NEURALC_USE_GPU) OPT=$(NEURALC_OPT))
 endif
 
-# ── source files (now in src/) ────────────────────────────────────
-SRC = src/tensor.c      \
-      src/layer.c       \
-      src/nn.c          \
-      src/optimizer.c   \
-      src/dataloader.c  \
-      src/dropout.c     \
-      src/batchnorm.c   \
-      src/conv.c        \
-      src/rnn.c         \
-      src/mnist.c       \
-      src/neuralc_init.c
+# ── sources ───────────────────────────────────────────────────────
+SRC = src/tensor.c       \
+      src/layer.c        \
+      src/nn.c           \
+      src/optimizer.c    \
+      src/dataloader.c   \
+      src/dropout.c      \
+      src/batchnorm.c    \
+      src/conv.c         \
+      src/rnn.c          \
+      src/mnist.c        \
+      config/neuralc_init.c
 
-# ── object files go into build/ ───────────────────────────────────
-OBJ = $(SRC:src/%.c=build/%.o)
+OBJ = $(patsubst src/%.c,   build/%.o, $(filter src/%,   $(SRC))) \
+      $(patsubst config/%.c, build/%.o, $(filter config/%, $(SRC)))
 
-.PHONY: all demo rnn_demo mnist_demo demo_mnist config clean \
-        libneuralc omp gpu test
+.PHONY: all demo rnn_demo mnist_demo demo_mnist config \
+        clean libneuralc omp gpu test
 
-# ── create build/ folder if it doesn't exist ──────────────────────
 $(shell mkdir -p build)
 
 # ── main targets ──────────────────────────────────────────────────
@@ -60,27 +60,11 @@ rnn_demo: $(OBJ) build/demo_rnn.o
 mnist_demo demo_mnist: $(OBJ) build/demo_mnist.o
 	$(CC) $(CFLAGS) -o mnist_demo $(OBJ) build/demo_mnist.o $(LDFLAGS)
 
-# ── tests ─────────────────────────────────────────────────────────
+# ── test ──────────────────────────────────────────────────────────
 test: $(OBJ) build/test_tensor.o
 	$(CC) $(CFLAGS) -o test_tensor $(OBJ) build/test_tensor.o $(LDFLAGS)
 	@echo "Running tests..."
 	@./test_tensor
-
-# ── compile src/*.c → build/*.o ───────────────────────────────────
-build/%.o: src/%.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# ── compile examples/*.c → build/*.o ──────────────────────────────
-build/%.o: examples/%.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# ── compile tests/*.c → build/*.o ─────────────────────────────────
-build/%.o: tests/%.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# ── old-style root .c files (backwards compat) ────────────────────
-build/%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
 
 # ── menuconfig ────────────────────────────────────────────────────
 config: menuconfig
@@ -90,25 +74,36 @@ menuconfig: build/config_ui.o build/neuralc_config_main.o
 	$(CC) $(CFLAGS) -o menuconfig \
 	      build/config_ui.o build/neuralc_config_main.o $(LDFLAGS)
 
-build/config_ui.o: src/config_ui.c include/config_ui.h
-	$(CC) $(CFLAGS) -c src/config_ui.c -o build/config_ui.o
+build/config_ui.o: config/config_ui.c config/config_ui.h
+	$(CC) $(CFLAGS) -c config/config_ui.c -o build/config_ui.o
 
-build/neuralc_config_main.o: src/neuralc_config_main.c include/config_ui.h
-	$(CC) $(CFLAGS) -c src/neuralc_config_main.c \
+build/neuralc_config_main.o: config/neuralc_config_main.c config/config_ui.h
+	$(CC) $(CFLAGS) -c config/neuralc_config_main.c \
 	      -o build/neuralc_config_main.o
 
-# ── shared library for Python bindings ───────────────────────────
+# ── compile rules ─────────────────────────────────────────────────
+build/%.o: src/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/%.o: config/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/%.o: examples/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/%.o: tests/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ── shared library ────────────────────────────────────────────────
 libneuralc: $(SRC)
 	$(CC) $(CFLAGS) -fPIC -shared -o libneuralc.so $(SRC) $(LDFLAGS)
-	@echo "Built libneuralc.so — run: python3 python/neuralc.py"
+	@echo "Built libneuralc.so"
 
-# ── OpenMP build ──────────────────────────────────────────────────
+# ── omp / gpu ─────────────────────────────────────────────────────
 omp: CFLAGS  += -DUSE_OMP -fopenmp
 omp: LDFLAGS += -fopenmp
 omp: all
-	@echo "Built with OpenMP multi-core"
 
-# ── OpenCL GPU build ──────────────────────────────────────────────
 gpu: CFLAGS  += -DUSE_OPENCL -I include/gpu
 gpu: LDFLAGS += -lOpenCL
 gpu: $(OBJ) build/main.o build/gpu_backend.o
@@ -125,4 +120,4 @@ clean:
 	rm -f neuralc demo rnn_demo mnist_demo test_tensor
 	rm -f menuconfig libneuralc.so neuralc_gpu
 	rm -f xor_weights.bin mnist_best.bin
-	@echo "Clean done"
+	@echo "✓ Clean done"
