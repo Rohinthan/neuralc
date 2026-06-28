@@ -180,6 +180,7 @@ neuralc/
 
 ```bash
 make              # build everything
+make config       # configure the threads manually
 make mnist_demo   # MNIST digit recognition
 make rnn_demo     # RNN + LSTM demo
 make omp          # build with OpenMP multi-core
