@@ -2,7 +2,7 @@ CC      = gcc
 CFLAGS  = -O2 -Wall -Wextra -std=c11 -Iinclude -I.
 CFLAGS += -I include/     # finds all headers in include/
 CFLAGS += -I config/      # finds config_ui.h and neuralc_init.h
-LDFLAGS = -lm1
+LDFLAGS = -lm
 
 # ── auto-load neuralc_config.h if it exists ───────────────────────
 ifneq (,$(wildcard neuralc_config.h))
