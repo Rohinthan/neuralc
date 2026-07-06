@@ -1,7 +1,8 @@
 CC      = gcc
-CFLAGS  = -O2 -Wall -Wextra -std=c11 -Iinclude -I.
-CFLAGS += -I include/     # finds all headers in include/
-CFLAGS += -I config/      # finds config_ui.h and neuralc_init.h
+CFLAGS  = -O2 -Wall -Wextra -std=c11
+CFLAGS += -I include/
+CFLAGS += -I config/
+CFLAGS += -I .
 LDFLAGS = -lm
 
 # ── auto-load neuralc_config.h if it exists ───────────────────────
@@ -21,26 +22,29 @@ ifneq (,$(wildcard neuralc_config.h))
   ifneq ($(NEURALC_OPT),)
     CFLAGS := $(filter-out -O2,$(CFLAGS)) $(NEURALC_OPT)
   endif
-  $(info [neuralc] Config loaded — OMP=$(NEURALC_USE_OMP) GPU=$(NEURALC_USE_GPU) OPT=$(NEURALC_OPT))
+  $(info [neuralc] Config loaded - OMP=$(NEURALC_USE_OMP) GPU=$(NEURALC_USE_GPU) OPT=$(NEURALC_OPT))
 endif
 
 # ── sources ───────────────────────────────────────────────────────
-SRC = src/tensor.c       \
-      src/layer.c        \
-      src/nn.c           \
-      src/optimizer.c    \
-      src/dataloader.c   \
-      src/dropout.c      \
-      src/batchnorm.c    \
-      src/conv.c         \
-      src/rnn.c          \
-      src/mnist.c        \
-      config/neuralc_init.c
+SRC_CORE = src/tensor.c    \
+           src/layer.c     \
+           src/nn.c        \
+           src/optimizer.c \
+           src/dataloader.c\
+           src/dropout.c   \
+           src/batchnorm.c \
+           src/conv.c      \
+           src/rnn.c       \
+           src/mnist.c
 
-OBJ = $(patsubst src/%.c,   build/%.o, $(filter src/%,   $(SRC))) \
-      $(patsubst config/%.c, build/%.o, $(filter config/%, $(SRC)))
+SRC_CFG  = config/neuralc_init.c
+SRC      = $(SRC_CORE) $(SRC_CFG)
 
-.PHONY: all demo rnn_demo mnist_demo demo_mnist config \
+OBJ_CORE = $(patsubst src/%.c,    build/%.o, $(SRC_CORE))
+OBJ_CFG  = $(patsubst config/%.c, build/%.o, $(SRC_CFG))
+OBJ      = $(OBJ_CORE) $(OBJ_CFG)
+
+.PHONY: all demo rnn_demo mnist_demo demo_mnist cnn_mnist config \
         clean libneuralc omp gpu test
 
 $(shell mkdir -p build)
@@ -60,7 +64,26 @@ rnn_demo: $(OBJ) build/demo_rnn.o
 mnist_demo demo_mnist: $(OBJ) build/demo_mnist.o
 	$(CC) $(CFLAGS) -o mnist_demo $(OBJ) build/demo_mnist.o $(LDFLAGS)
 
-# ── test ──────────────────────────────────────────────────────────
+cnn_mnist: $(OBJ) build/demo_cnn_mnist.o
+	$(CC) $(CFLAGS) -o cnn_mnist $(OBJ) build/demo_cnn_mnist.o $(LDFLAGS)
+
+# ── explicit compile rules for all example files ──────────────────
+build/main.o: examples/main.c
+	$(CC) $(CFLAGS) -c examples/main.c -o build/main.o
+
+build/demo.o: examples/demo.c
+	$(CC) $(CFLAGS) -c examples/demo.c -o build/demo.o
+
+build/demo_rnn.o: examples/demo_rnn.c
+	$(CC) $(CFLAGS) -c examples/demo_rnn.c -o build/demo_rnn.o
+
+build/demo_mnist.o: examples/demo_mnist.c
+	$(CC) $(CFLAGS) -c examples/demo_mnist.c -o build/demo_mnist.o
+
+build/demo_cnn_mnist.o: examples/demo_cnn_mnist.c
+	$(CC) $(CFLAGS) -c examples/demo_cnn_mnist.c -o build/demo_cnn_mnist.o
+
+# ── tests ─────────────────────────────────────────────────────────
 test: $(OBJ) build/test_tensor.o
 	$(CC) $(CFLAGS) -o test_tensor $(OBJ) build/test_tensor.o $(LDFLAGS)
 	@echo "Running tests..."
@@ -117,7 +140,7 @@ build/gpu_backend.o: src/gpu/neuralc_gpu.c include/gpu/neuralc_gpu.h
 # ── clean ─────────────────────────────────────────────────────────
 clean:
 	rm -f build/*.o
-	rm -f neuralc demo rnn_demo mnist_demo test_tensor
+	rm -f neuralc demo rnn_demo mnist_demo cnn_mnist test_tensor
 	rm -f menuconfig libneuralc.so neuralc_gpu
-	rm -f xor_weights.bin mnist_best.bin
-	@echo "✓ Clean done"
+	rm -f xor_weights.bin mnist_best.bin cnn_mnist_best.bin
+	@echo "Clean done"
