@@ -13,6 +13,8 @@ It is **not** a copy or port of TensorFlow or PyTorch — it is an original libr
 - **Zero dependencies** — only needs a C compiler and `libm`
 - **Portability** — runs on Linux, macOS, Windows, embedded systems
 
+---
+
 ##Creator thoughts 
 
 - something i tell - this project created with ai assist not fully i understand . The main purpose is  c doen't have a native libraries like tensorflow and pytorch but have some  . tensor/ pytorch is heavy frameworks so i decided to build a lightweight library for just fun , i start the project i dont know its work , but now its working i not know how , so programers please develop this project for create a optimized neural network library for c . thank you - by the creator .     
