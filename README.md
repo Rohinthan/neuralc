@@ -59,10 +59,7 @@ See [MNIST.md](MNIST.md) for full setup guide and contributor tasks.
 | OpenMP multi-core support | ✅ Done |
 | Python bindings (ctypes) | ✅ Done |
 | GPU support via OpenCL | ✅ Done |
-| GRU layer | 🔜 Planned |
-| Embedding layer (NLP) | 🔜 Planned |
-| Transformer | 🔜 Planned |
-| CIFAR-10 demo | 🔜 Planned |
+
 
 ---
 
