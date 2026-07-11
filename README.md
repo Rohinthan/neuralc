@@ -17,7 +17,7 @@ It is **not** a copy or port of TensorFlow or PyTorch — it is an original libr
 
 ## Creator thoughts 
 
-- something i tell - this project created i not fully understand . The main purpose is c doesn't have a native libraries like tensorflow and pytorch but have some. Tensorflow / pytorch is heavy frameworks and need python. So i decided to build a lightweight library for just fun , i start the project i dont know its work , but now its working and i don't know how , so programers and contributors please help to develop this project for create a optimized neural network library for c. thank you - by the creator .     
+- something i tell - this project created the main purpose is c doesn't have a native libraries like tensorflow and pytorch but have some. Tensorflow / pytorch is heavy frameworks and need python. So i decided to build a lightweight library for just fun , i start the project i dont know its work or not , but now its working, so programers and contributors please help to develop this project for create a optimized neural network library for c. thank you - by the creator .     
 
 ---
 
