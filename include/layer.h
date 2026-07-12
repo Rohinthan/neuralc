@@ -57,4 +57,14 @@ void dense_backward(DenseLayer *l, const Tensor *grad_out);
 /* ── parameter access ───────────────────────────────────────────── */
 int  dense_param_count(const DenseLayer *l);
 
+/* ── GPU residency ───────────────────────────────────────────────
+ * Moves W, b, dW, db (and any cached z/a/dX) to/from the GPU.
+ * After dense_to_gpu(), pass GPU-resident input tensors (see
+ * tensor_to_gpu()) to dense_forward/dense_backward as usual — the
+ * same functions run either the CPU or CUDA path automatically.
+ * Requires the library to be built with -DUSE_CUDA.               */
+void dense_to_gpu(DenseLayer *l);
+void dense_to_gpu_ex(DenseLayer *l, CF_GpuBackend backend);
+void dense_to_cpu(DenseLayer *l);
+
 #endif /* LAYER_H */
