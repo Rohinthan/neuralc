@@ -36,6 +36,8 @@ typedef struct {
     char cpu_model[128];   /* from /proc/cpuinfo "model name"    */
     int  gpu_detected;     /* 1 if DRM/DRI device found          */
     char gpu_name[128];    /* GPU device path or name            */
+    int  cuda_detected;    /* 1 if an NVIDIA/CUDA device is found */
+    char cuda_name[128];   /* CUDA device path or driver info     */
 } HardwareProfile;
 
 /* ── item types ─────────────────────────────────────────────────── */
