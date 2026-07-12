@@ -66,6 +66,37 @@ void detect_system_hardware(HardwareProfile *prof) {
         strncpy(prof->gpu_name, "GPU detected (/dev/dri/card0)", sizeof(prof->gpu_name) - 1);
     }
     prof->gpu_name[sizeof(prof->gpu_name) - 1] = '\0';
+
+    /* Validate NVIDIA/CUDA availability — the neuralc GPU backend is
+     * CUDA-only, so this is checked independently of the generic DRM
+     * probe above (a DRM device may exist with no CUDA present, e.g.
+     * an integrated/AMD GPU, and vice versa on headless CUDA boxes). */
+    prof->cuda_detected = 0;
+    strncpy(prof->cuda_name, "None detected", sizeof(prof->cuda_name) - 1);
+    if (access("/dev/nvidiactl", F_OK) == 0 || access("/dev/nvidia0", F_OK) == 0) {
+        prof->cuda_detected = 1;
+        strncpy(prof->cuda_name, "NVIDIA driver detected (/dev/nvidia*)",
+                sizeof(prof->cuda_name) - 1);
+        /* pull the driver version line if present — nice to show the
+         * user in the hardware banner without shelling out */
+        FILE *nv = fopen("/proc/driver/nvidia/version", "r");
+        if (nv) {
+            char line[256];
+            if (fgets(line, sizeof(line), nv)) {
+                char *nl = strchr(line, '\n');
+                if (nl) *nl = '\0';
+                strncpy(prof->cuda_name, line, sizeof(prof->cuda_name) - 1);
+            }
+            fclose(nv);
+        }
+    } else if (access("/usr/lib/x86_64-linux-gnu/libcuda.so", F_OK) == 0 ||
+               access("/usr/lib/x86_64-linux-gnu/libcuda.so.1", F_OK) == 0 ||
+               access("/usr/local/cuda/lib64/libcudart.so", F_OK) == 0) {
+        prof->cuda_detected = 1;
+        strncpy(prof->cuda_name, "CUDA runtime library found (no active device node)",
+                sizeof(prof->cuda_name) - 1);
+    }
+    prof->cuda_name[sizeof(prof->cuda_name) - 1] = '\0';
 }
 
 /* ── ANSI Escape Sequences & Color Macros ────────────────────────── */
@@ -541,7 +572,7 @@ static void build_menus(NeuralcConfig *cfg) {
     }
     add_number(&perf_menu, "Thread Count (Manual mode)", "OMP_THREADS", cfg->omp_threads, 1, 256, "Number of threads for OpenMP (only used in Manual mode)");
     add_sep(&perf_menu, NULL);
-    add_toggle(&perf_menu, "Enable OpenCL GPU", "USE_GPU", cfg->use_gpu, "Use GPU via OpenCL for tensor operations (requires OpenCL)");
+    add_toggle(&perf_menu, "Enable CUDA GPU acceleration", "USE_GPU", cfg->use_gpu, "Offload matmul/Conv2D/MaxPool2D/activations to an NVIDIA GPU via CUDA (requires nvcc + a CUDA-capable device)");
     add_toggle(&perf_menu, "Enable BLAS integration", "USE_BLAS", cfg->use_blas, "Use OpenBLAS for faster matrix multiply");
 
     /* ── Training Submenu ── */
@@ -683,6 +714,10 @@ int config_ui_run(NeuralcConfig *cfg) {
     printf("  Logical Processors: " FG_GREEN "%d" FG_CYAN "\n" RESET, hw.cpu_cores);
     printf(BG_BLACK FG_CYAN);
     printf("  GPU Hardware Accel: %s\n" RESET, hw.gpu_detected ? FG_GREEN "Detected" : FG_YELLOW "Not detected");
+    printf(BG_BLACK FG_CYAN);
+    printf("  CUDA (NVIDIA):      %s" FG_WHITE " %s\n" RESET,
+           hw.cuda_detected ? FG_GREEN "Detected   " : FG_YELLOW "Not detected",
+           hw.cuda_detected ? hw.cuda_name : "");
     printf(RESET "\n  Loading localized matrix parameters...\n\n" RESET);
     fflush(stdout);
 
@@ -726,7 +761,15 @@ int config_ui_run(NeuralcConfig *cfg) {
 
     const char *ol[]  = {"-O0","-O1","-O2","-O3"};
     const char *opt[] = {"Adam","SGD","RMSProp"};
-    printf("  GPU Pipeline target:  %s\n", cfg->use_gpu ? FG_GREEN "Enabled" RESET : "Disabled");
+    if (cfg->use_gpu && !hw.cuda_detected) {
+        printf("  GPU Pipeline target:  " FG_YELLOW "Enabled in config, but no CUDA device "
+               "was detected on this machine\n" RESET);
+        printf("                         Build with -DUSE_CUDA anyway if you like, but guard\n"
+               "                         tensor_to_gpu() calls with cf_cuda_enabled() so\n"
+               "                         training falls back to CPU instead of aborting\n");
+    } else {
+        printf("  GPU Pipeline target:  %s\n", cfg->use_gpu ? FG_GREEN "Enabled (CUDA)" RESET : "Disabled");
+    }
     printf("  Optimization Profile: %s\n", ol[cfg->opt_level < 4 ? cfg->opt_level : 2]);
     printf("  Matrix Batch Boundary: %d\n",   cfg->batch_size);
     printf("  Core Learning Rate:   %.6f\n", cfg->learning_rate);
@@ -787,8 +830,8 @@ int config_save(const NeuralcConfig *cfg, const char *path) {
 "  #endif\n"
 "#endif\n\n"
 "#if NEURALC_USE_GPU\n"
-"  #ifndef USE_OPENCL\n"
-"    #define USE_OPENCL\n"
+"  #ifndef USE_CUDA\n"
+"    #define USE_CUDA\n"
 "  #endif\n"
 "#endif\n\n"
 "#endif\n",
@@ -874,7 +917,7 @@ void config_print(const NeuralcConfig *cfg) {
     if (cfg->use_omp)
         printf(" (%s mode, active threads: %d)", cfg->omp_auto ? "Auto" : "Manual", cfg->omp_threads);
     printf("\n");
-    printf("  Graphics Pipeline Engine Core (OpenCL): %s\n", cfg->use_gpu  ? "Active" : "Inactive");
+    printf("  Graphics Pipeline Engine Core (CUDA): %s\n", cfg->use_gpu  ? "Active" : "Inactive");
     printf("  BLAS Hardware Vectorization Engine:    %s\n", cfg->use_blas ? "Active" : "Inactive");
     printf("Hyperparameters Layout:\n");
     printf("  Matrix Batch Limit Segment:            %d\n", cfg->batch_size);
