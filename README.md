@@ -194,13 +194,17 @@ make clean        # remove all build files
 
 # make libneualc
 
-then you create this, before create a env .
+make libneuralc is create a connection between the c codes to ctype in python.
 
 ```bash
+
  make libneuralc
 
 ```
-Now create environment
+
+the file can create a output files -o
+
+Now create environment:
 
 ```bash
 
@@ -208,7 +212,7 @@ python3 -m venv venv
 
 ```
 
-you see in the root file can create venv file so active the venv
+you see in the root file can create venv file so active the virutal Environment :
 
 ```bash
 
@@ -224,7 +228,7 @@ pip install numpy
 
 ```
 
-go the python file 
+And go the python file using ::
 
 ```bash
 
@@ -236,24 +240,59 @@ run
 
 ```bash
 
-python3 libneuralc.py
+python3 neuralc.py
+
+```
+Should see like :
+
+
+``` 
+neuralc Python bindings loaded!
+Library: /home/raccoon/Music/neuralc/libneuralc.so
+CUDA available:   False
+OpenCL available: False
+
+Training XOR...
+  Epoch    0  loss=0.767939
+  Epoch  500  loss=0.349011
+  Epoch 1000  loss=0.347207
+  Epoch 1500  loss=0.346828
+  Epoch 2000  loss=0.346740
+  Epoch 2500  loss=0.346671
+  Epoch 3000  loss=0.346631
+
+Weights saved to xor_from_python.bin
+Done! neuralc Python bindings working.   // show the status 
+
+Smoke-testing Conv2D + MaxPool2D + flatten (CPU)...
+  conv output shape:   (2, 4, 8, 8)
+  pooled output shape: (2, 4, 4, 4)
+  flattened shape:     (2, 64)
+  conv2d param_count:  40
 
 ```
 
-its create a libneuralc.so file in the root 
+come back in neuralc folder using " cd .. "and check 
 
+```bash
 
+file libneuralc.so
 
+```
 
+its show like :
 
+``` bash
+
+libneuralc.so: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, BuildID[sha1]=d807e486fed8bc5bac0aea90176a6e34b6a1dda1, not stripped
+
+```
+ That output confirms the library is completely healthy.
+
+   So, his  confirming the exact chain that makes neuralc.py work — a valid, correctly-architected shared library, with its function names intact, ready for dlopen()/ctypes.CDLL() to load and look up functions in by name. Nothing here is a problem; it's the healthy fingerprint of a working build.
 
 
 ~~~
-
-
-
-
-
 
 ---
 
@@ -287,25 +326,17 @@ its create a libneuralc.so file in the root
 - [x] LSTM layer
 - [x] Backpropagation Through Time (BPTT)
 
-### 🔜 v0.6 — More Layers
-- [ ] GRU layer
-- [ ] Embedding layer (for NLP)
-- [ ] Layer Normalization
-- [ ] 1D Convolution
-
-### 🔜 v0.7 — NLP
-- [ ] Tokenizer
-- [ ] Sentiment analysis demo
-- [ ] Text classification
-
-### 🔜 v1.0 — Full Release
-- [ ] Transformer architecture
-- [ ] CIFAR-10 demo
-- [ ] BLAS integration
-- [ ] Full documentation site
-- [ ] Test suite
-
 ---
+
+~~~
+
+## new 
+
+Added - cuda_backend.cu
+      - cuda_backend.h
+
+For supporting the GPU's , if you have a gpu test and report support or not , its surely support . but i dont have a graphics card to check.
+
 
 ## Contributing
 
