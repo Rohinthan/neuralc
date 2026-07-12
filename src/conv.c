@@ -3,6 +3,10 @@
 #include <string.h>
 #include <math.h>
 
+#ifdef USE_CUDA
+#include "cuda_backend.h"
+#endif
+
 /* ── index helpers ───────────────────────────────────────────────── */
 /*
  * 4D tensor layout: [batch, channels, height, width]
@@ -75,6 +79,26 @@ static Tensor *pad_input(const Tensor *input, int pad) {
     int pH    = H + 2*pad;
     int pW    = W + 2*pad;
     int sh[4] = {batch, C, pH, pW};
+
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(input)) {
+        Tensor *out = (Tensor *)malloc(sizeof(Tensor));
+        CF_CHECK_ALLOC(out);
+        out->ndim = 4;
+        memcpy(out->shape, sh, sizeof(sh));
+        out->size = (size_t)batch * C * pH * pW;
+        out->owns_data = 1;
+        out->device = CF_DEVICE_GPU;
+        out->gpu_backend = CF_GPU_CUDA;
+        out->data = cuda_malloc_f32(out->size);
+        cuda_pad2d(input->data, out->data, batch, C, H, W, pad);
+        return out;
+    }
+#endif
+    CF_CHECK(input->device == CF_DEVICE_CPU,
+             "conv2d: input is GPU-resident on a backend Conv2D doesn't "
+             "support yet (CUDA only) — call tensor_to_cpu() first");
+
     Tensor *out = tensor_zeros(sh, 4);
     for (int b = 0; b < batch; b++)
         for (int c = 0; c < C; c++)
@@ -83,6 +107,41 @@ static Tensor *pad_input(const Tensor *input, int pad) {
                     out->data[IDX4(b,c,h+pad,w+pad, C,pH,pW)] =
                         input->data[IDX4(b,c,h,w, C,H,W)];
     return out;
+}
+
+/* ── GPU residency ───────────────────────────────────────────────── */
+
+void conv2d_to_gpu(Conv2D *l) {
+#ifndef USE_CUDA
+    (void)l;
+    cforge_error("conv2d_to_gpu: Conv2D/MaxPool2D GPU support is CUDA-only "
+                 "for now (no OpenCL kernels yet) — library was built "
+                 "without -DUSE_CUDA", __FILE__, __LINE__);
+#else
+    /* explicit CF_GPU_CUDA, NOT tensor_to_gpu() — if only USE_OPENCL is
+     * compiled in, the generic picker would move these to OpenCL
+     * buffers that conv2d_forward/backward can't read (no OpenCL conv
+     * kernels exist yet), silently corrupting memory instead of
+     * erroring. Fail loud and clear instead. */
+    tensor_to_gpu_ex(l->W, CF_GPU_CUDA);
+    tensor_to_gpu_ex(l->b, CF_GPU_CUDA);
+    tensor_to_gpu_ex(l->dW, CF_GPU_CUDA);
+    tensor_to_gpu_ex(l->db, CF_GPU_CUDA);
+#endif
+}
+
+void conv2d_to_cpu(Conv2D *l) {
+#ifndef USE_CUDA
+    (void)l;
+    cforge_error("conv2d_to_cpu: library was built without -DUSE_CUDA",
+                 __FILE__, __LINE__);
+#else
+    tensor_to_cpu(l->W);
+    tensor_to_cpu(l->b);
+    tensor_to_cpu(l->dW);
+    tensor_to_cpu(l->db);
+    if (l->input_cache) tensor_to_cpu(l->input_cache);
+#endif
 }
 
 /* ── forward ─────────────────────────────────────────────────────── */
@@ -116,6 +175,22 @@ void conv2d_forward(Conv2D *l, const Tensor *input, Tensor *output) {
     int pW = in_W + 2*l->pad;
 
     tensor_fill(output, 0.0f);
+
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(input)) {
+        CF_CHECK(CF_IS_CUDA(l->W),
+                 "conv2d_forward: layer weights are on CPU but input is on "
+                 "GPU — call conv2d_to_gpu() first");
+        cuda_conv2d_forward(l->input_cache->data, l->W->data, l->b->data,
+                             output->data,
+                             batch, in_C, pH, pW, out_C, kH, kW, S,
+                             out_H, out_W);
+        return;
+    }
+#endif
+    CF_CHECK(input->device == CF_DEVICE_CPU,
+             "conv2d_forward: input is GPU-resident on a backend Conv2D "
+             "doesn't support yet (CUDA only) — call tensor_to_cpu() first");
 
     /*
      * output[b, oc, oh, ow] =
@@ -162,7 +237,40 @@ void conv2d_backward(Conv2D *l, const Tensor *grad_out, Tensor *grad_in) {
 
     /* padded gradient buffer for input */
     int sh_pg[4] = {batch, in_C, pH, pW};
-    Tensor *dpad = tensor_zeros(sh_pg, 4);
+    Tensor *dpad;
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(grad_out)) {
+        CF_CHECK(CF_IS_CUDA(l->W) && CF_IS_CUDA(l->input_cache),
+                 "conv2d_backward: layer/cache are on CPU but grad_out is on "
+                 "GPU — call conv2d_to_gpu() first");
+        dpad = (Tensor *)malloc(sizeof(Tensor));
+        CF_CHECK_ALLOC(dpad);
+        dpad->ndim = 4;
+        memcpy(dpad->shape, sh_pg, sizeof(sh_pg));
+        dpad->size = (size_t)batch * in_C * pH * pW;
+        dpad->owns_data = 1;
+        dpad->device = CF_DEVICE_GPU;
+        dpad->gpu_backend = CF_GPU_CUDA;
+        dpad->data = cuda_malloc_f32(dpad->size);
+
+        cuda_conv2d_backward(l->input_cache->data, l->W->data, grad_out->data,
+                              l->dW->data, l->db->data, dpad->data,
+                              batch, in_C, pH, pW, out_C, kH, kW, S,
+                              out_H, out_W);
+
+        /* scale gradients by 1/batch (matches CPU path exactly) */
+        tensor_scale(l->dW, 1.0f/(float)batch, l->dW);
+        tensor_scale(l->db, 1.0f/(float)batch, l->db);
+
+        cuda_unpad2d(dpad->data, grad_in->data, batch, in_C, in_H, in_W, l->pad);
+        tensor_free(dpad);
+        return;
+    }
+#endif
+    CF_CHECK(grad_out->device == CF_DEVICE_CPU,
+             "conv2d_backward: grad_out is GPU-resident on a backend Conv2D "
+             "doesn't support yet (CUDA only) — call tensor_to_cpu() first");
+    dpad = tensor_zeros(sh_pg, 4);
 
     tensor_fill(l->dW, 0.0f);
     tensor_fill(l->db, 0.0f);
@@ -219,6 +327,19 @@ void maxpool2d_forward(const Tensor *input, Tensor *output, Tensor *mask,
     int out_H = (H - pool_size) / stride + 1;
     int out_W = (W - pool_size) / stride + 1;
 
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(input)) {
+        cuda_maxpool2d_forward(input->data, output->data, mask->data,
+                                batch, C, H, W, pool_size, stride,
+                                out_H, out_W);
+        return;
+    }
+#endif
+    CF_CHECK(input->device == CF_DEVICE_CPU,
+             "maxpool2d_forward: input is GPU-resident on a backend "
+             "MaxPool2D doesn't support yet (CUDA only) — call "
+             "tensor_to_cpu() first");
+
     for (int b = 0; b < batch; b++)
     for (int c = 0; c < C;     c++)
     for (int oh = 0; oh < out_H; oh++)
@@ -243,6 +364,21 @@ void maxpool2d_forward(const Tensor *input, Tensor *output, Tensor *mask,
 
 void maxpool2d_backward(const Tensor *grad_out, Tensor *grad_in,
                         const Tensor *mask, int pool_size, int stride) {
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(grad_out)) {
+        int batch = grad_in->shape[0], C = grad_in->shape[1];
+        int H     = grad_in->shape[2], W = grad_in->shape[3];
+        int out_H = grad_out->shape[2], out_W = grad_out->shape[3];
+        cuda_maxpool2d_backward(grad_out->data, grad_in->data, mask->data,
+                                 batch, C, H, W, pool_size, stride,
+                                 out_H, out_W);
+        return;
+    }
+#endif
+    CF_CHECK(grad_out->device == CF_DEVICE_CPU,
+             "maxpool2d_backward: grad_out is GPU-resident on a backend "
+             "MaxPool2D doesn't support yet (CUDA only) — call "
+             "tensor_to_cpu() first");
     (void)pool_size; (void)stride;
     tensor_fill(grad_in, 0.0f);
     for (size_t i = 0; i < grad_out->size; i++) {
