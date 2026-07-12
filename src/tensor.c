@@ -10,6 +10,14 @@
 #include <omp.h>
 #endif
 
+#ifdef USE_CUDA
+#include "cuda_backend.h"
+#endif
+
+#ifdef USE_OPENCL
+#include "opencl_backend.h"
+#endif
+
 /* ── helpers ─────────────────────────────────────────────────────── */
 
 static size_t shape_size(const int *shape, int ndim) {
@@ -46,6 +54,8 @@ Tensor *tensor_create(const int *shape, int ndim) {
     memcpy(t->shape, shape, ndim * sizeof(int));
     t->data = (float *)malloc(t->size * sizeof(float));
     t->owns_data = 1;
+    t->device = CF_DEVICE_CPU;
+    t->gpu_backend = CF_GPU_NONE;
     if (!t->data) { free(t); return NULL; }
     return t;
 }
@@ -84,15 +94,150 @@ Tensor *tensor_randn(const int *shape, int ndim) {
 }
 
 Tensor *tensor_clone(const Tensor *t) {
-    Tensor *c = tensor_create(t->shape, t->ndim);
-    if (c) memcpy(c->data, t->data, t->size * sizeof(float));
+    Tensor *c = tensor_create(t->shape, t->ndim);  /* always allocated on CPU */
+    if (!c) return NULL;
+#ifdef USE_CUDA
+    if (t->device == CF_DEVICE_GPU && t->gpu_backend == CF_GPU_CUDA) {
+        free(c->data);
+        c->data = cuda_malloc_f32(t->size);
+        c->device = CF_DEVICE_GPU;
+        c->gpu_backend = CF_GPU_CUDA;
+        cuda_memcpy_d2d(c->data, t->data, t->size);
+        return c;
+    }
+#endif
+#ifdef USE_OPENCL
+    if (t->device == CF_DEVICE_GPU && t->gpu_backend == CF_GPU_OPENCL) {
+        free(c->data);
+        c->data = opencl_malloc_f32(t->size);
+        c->device = CF_DEVICE_GPU;
+        c->gpu_backend = CF_GPU_OPENCL;
+        opencl_memcpy_d2d(c->data, t->data, t->size);
+        return c;
+    }
+#endif
+    memcpy(c->data, t->data, t->size * sizeof(float));
     return c;
 }
 
 void tensor_free(Tensor *t) {
     if (!t) return;
-    if (t->owns_data) free(t->data);
+    if (t->owns_data) {
+#if defined(USE_CUDA) || defined(USE_OPENCL)
+        if (t->device == CF_DEVICE_GPU) {
+#ifdef USE_CUDA
+            if (t->gpu_backend == CF_GPU_CUDA) { cuda_free_f32(t->data); free(t); return; }
+#endif
+#ifdef USE_OPENCL
+            if (t->gpu_backend == CF_GPU_OPENCL) { opencl_free_f32(t->data); free(t); return; }
+#endif
+        }
+#endif
+        free(t->data);
+    }
     free(t);
+}
+
+/* ── GPU residency ──────────────────────────────────────────────── */
+
+int cf_cuda_enabled(void) {
+#ifdef USE_CUDA
+    return cuda_available();
+#else
+    return 0;
+#endif
+}
+
+int cf_opencl_enabled(void) {
+#ifdef USE_OPENCL
+    return opencl_available();
+#else
+    return 0;
+#endif
+}
+
+Tensor *tensor_to_gpu_ex(Tensor *t, CF_GpuBackend backend) {
+    if (!t || t->device == CF_DEVICE_GPU) return t;
+    CF_CHECK(t->owns_data, "tensor_to_gpu: cannot migrate a non-owning view");
+
+    if (backend == CF_GPU_CUDA) {
+#ifndef USE_CUDA
+        cforge_error("tensor_to_gpu_ex: requested CUDA but library was built "
+                     "without -DUSE_CUDA", __FILE__, __LINE__);
+        return NULL;
+#else
+        float *dev = cuda_malloc_f32(t->size);
+        cuda_memcpy_h2d(dev, t->data, t->size);
+        free(t->data);
+        t->data = dev;
+        t->device = CF_DEVICE_GPU;
+        t->gpu_backend = CF_GPU_CUDA;
+        return t;
+#endif
+    } else if (backend == CF_GPU_OPENCL) {
+#ifndef USE_OPENCL
+        cforge_error("tensor_to_gpu_ex: requested OpenCL but library was built "
+                     "without -DUSE_OPENCL", __FILE__, __LINE__);
+        return NULL;
+#else
+        float *dev = opencl_malloc_f32(t->size);
+        opencl_memcpy_h2d(dev, t->data, t->size);
+        free(t->data);
+        t->data = dev;
+        t->device = CF_DEVICE_GPU;
+        t->gpu_backend = CF_GPU_OPENCL;
+        return t;
+#endif
+    }
+    cforge_error("tensor_to_gpu_ex: no GPU backend requested", __FILE__, __LINE__);
+    return NULL;
+}
+
+Tensor *tensor_to_gpu(Tensor *t) {
+    if (!t || t->device == CF_DEVICE_GPU) return t;
+#ifdef USE_CUDA
+    if (cuda_available()) return tensor_to_gpu_ex(t, CF_GPU_CUDA);
+#endif
+#ifdef USE_OPENCL
+    if (opencl_available()) return tensor_to_gpu_ex(t, CF_GPU_OPENCL);
+#endif
+    cforge_error("tensor_to_gpu: no usable GPU backend — library was built "
+                 "without -DUSE_CUDA/-DUSE_OPENCL, or no device was found at "
+                 "runtime (check cf_cuda_enabled()/cf_opencl_enabled() first)",
+                 __FILE__, __LINE__);
+    return NULL;
+}
+
+Tensor *tensor_to_cpu(Tensor *t) {
+    if (!t || t->device == CF_DEVICE_CPU) return t;
+    CF_CHECK(t->owns_data, "tensor_to_cpu: cannot migrate a non-owning view");
+    float *host = (float *)malloc(t->size * sizeof(float));
+    CF_CHECK_ALLOC(host);
+
+#ifdef USE_CUDA
+    if (t->gpu_backend == CF_GPU_CUDA) {
+        cuda_memcpy_d2h(host, t->data, t->size);
+        cuda_free_f32(t->data);
+        t->data = host;
+        t->device = CF_DEVICE_CPU;
+        t->gpu_backend = CF_GPU_NONE;
+        return t;
+    }
+#endif
+#ifdef USE_OPENCL
+    if (t->gpu_backend == CF_GPU_OPENCL) {
+        opencl_memcpy_d2h(host, t->data, t->size);
+        opencl_free_f32(t->data);
+        t->data = host;
+        t->device = CF_DEVICE_CPU;
+        t->gpu_backend = CF_GPU_NONE;
+        return t;
+    }
+#endif
+    free(host);
+    cforge_error("tensor_to_cpu: tensor is on GPU but no matching backend is "
+                 "compiled in", __FILE__, __LINE__);
+    return NULL;
 }
 
 /* ── element access ──────────────────────────────────────────────── */
@@ -123,21 +268,63 @@ void tensor_set(Tensor *t, const int *idx, float val) {
   #define OMP_ELWISE
 #endif
 
-#define ELWISE2(name, expr)                                              \
+#if defined(USE_CUDA) || defined(USE_OPENCL)
+  #define ELWISE2_GPU_HOOK(cuda_fn, opencl_fn, a, b, out)                 \
+      if (CF_IS_CUDA(a)) {                                                \
+          IF_CUDA(cuda_fn((a)->data, (b)->data, (out)->data, (a)->size); return;) \
+      }                                                                    \
+      if (CF_IS_OPENCL(a)) {                                              \
+          IF_OPENCL(opencl_fn((a)->data, (b)->data, (out)->data, (a)->size); return;) \
+      }
+#else
+  #define ELWISE2_GPU_HOOK(cuda_fn, opencl_fn, a, b, out)
+#endif
+
+#ifdef USE_CUDA
+  #define IF_CUDA(x) x
+#else
+  #define IF_CUDA(x)
+#endif
+#ifdef USE_OPENCL
+  #define IF_OPENCL(x) x
+#else
+  #define IF_OPENCL(x)
+#endif
+
+#define ELWISE2(name, cuda_fn, opencl_fn, expr)                          \
 void name(const Tensor *a, const Tensor *b, Tensor *out) {              \
     CF_CHECK_SHAPE(a, out); CF_CHECK_SHAPE(b, out);                      \
+    ELWISE2_GPU_HOOK(cuda_fn, opencl_fn, a, b, out)                      \
     OMP_ELWISE                                                           \
     for (size_t i = 0; i < a->size; i++)                                 \
         out->data[i] = (expr);                                           \
 }
 
-ELWISE2(tensor_add, a->data[i] + b->data[i])
-ELWISE2(tensor_sub, a->data[i] - b->data[i])
-ELWISE2(tensor_mul, a->data[i] * b->data[i])
-ELWISE2(tensor_div, a->data[i] / b->data[i])
+ELWISE2(tensor_add, cuda_add, opencl_add, a->data[i] + b->data[i])
+ELWISE2(tensor_sub, cuda_sub, opencl_sub, a->data[i] - b->data[i])
+ELWISE2(tensor_mul, cuda_mul, opencl_mul, a->data[i] * b->data[i])
+
+/* no GPU kernel for div on either backend (unused in any hot path) —
+ * GPU tensors must be brought back with tensor_to_cpu() first */
+void tensor_div(const Tensor *a, const Tensor *b, Tensor *out) {
+    CF_CHECK_SHAPE(a, out); CF_CHECK_SHAPE(b, out);
+#if defined(USE_CUDA) || defined(USE_OPENCL)
+    CF_CHECK(a->device == CF_DEVICE_CPU,
+             "tensor_div: no GPU kernel — call tensor_to_cpu() first");
+#endif
+    OMP_ELWISE
+    for (size_t i = 0; i < a->size; i++)
+        out->data[i] = a->data[i] / b->data[i];
+}
 
 void tensor_scale(const Tensor *a, float s, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(a)) { cuda_scale(a->data, s, out->data, a->size); return; }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(a)) { opencl_scale(a->data, s, out->data, a->size); return; }
+#endif
     #ifdef USE_OMP
     #pragma omp parallel for schedule(static) if(a->size > 4096)
     #endif
@@ -255,6 +442,23 @@ void tensor_matmul(const Tensor *a, const Tensor *b, Tensor *out) {
     CF_CHECK(out->shape[0]==M && out->shape[1]==N,
              "matmul: output shape mismatch");
 
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(a)) {
+        CF_CHECK(b->device == CF_DEVICE_GPU && out->device == CF_DEVICE_GPU,
+                 "matmul: a, b, out must all be on the same device");
+        cuda_matmul(a->data, b->data, out->data, M, K, N);
+        return;
+    }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(a)) {
+        CF_CHECK(b->device == CF_DEVICE_GPU && out->device == CF_DEVICE_GPU,
+                 "matmul: a, b, out must all be on the same device");
+        opencl_matmul(a->data, b->data, out->data, M, K, N);
+        return;
+    }
+#endif
+
     /*
      * Restructured to i,j outer / k inner so collapse(2) is safe.
      * Each (i,j) pair has its own local `sum` — no data race.
@@ -287,6 +491,12 @@ void tensor_transpose(const Tensor *a, Tensor *out) {
 
 void tensor_relu(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(a)) { cuda_relu(a->data, out->data, a->size); return; }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(a)) { opencl_relu(a->data, out->data, a->size); return; }
+#endif
 #ifdef USE_OMP
     #pragma omp parallel for schedule(static) if(a->size > 4096)
 #endif
@@ -295,6 +505,16 @@ void tensor_relu(const Tensor *a, Tensor *out) {
 }
 void tensor_relu_grad(const Tensor *a, const Tensor *grad, Tensor *out) {
     CF_CHECK_SHAPE(a, grad); CF_CHECK_SHAPE(a, out);
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(a)) {
+        cuda_relu_grad(a->data, grad->data, out->data, a->size); return;
+    }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(a)) {
+        opencl_relu_grad(a->data, grad->data, out->data, a->size); return;
+    }
+#endif
 #ifdef USE_OMP
     #pragma omp parallel for schedule(static) if(a->size > 4096)
 #endif
@@ -303,6 +523,12 @@ void tensor_relu_grad(const Tensor *a, const Tensor *grad, Tensor *out) {
 }
 void tensor_sigmoid(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(a)) { cuda_sigmoid(a->data, out->data, a->size); return; }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(a)) { opencl_sigmoid(a->data, out->data, a->size); return; }
+#endif
 #ifdef USE_OMP
     #pragma omp parallel for schedule(static) if(a->size > 4096)
 #endif
@@ -311,6 +537,16 @@ void tensor_sigmoid(const Tensor *a, Tensor *out) {
 }
 void tensor_sigmoid_grad(const Tensor *sig, const Tensor *grad, Tensor *out) {
     CF_CHECK_SHAPE(sig, grad); CF_CHECK_SHAPE(sig, out);
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(sig)) {
+        cuda_sigmoid_grad(sig->data, grad->data, out->data, sig->size); return;
+    }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(sig)) {
+        opencl_sigmoid_grad(sig->data, grad->data, out->data, sig->size); return;
+    }
+#endif
 #ifdef USE_OMP
     #pragma omp parallel for schedule(static) if(sig->size > 4096)
 #endif
@@ -321,6 +557,12 @@ void tensor_sigmoid_grad(const Tensor *sig, const Tensor *grad, Tensor *out) {
 }
 void tensor_tanh_t(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(a)) { cuda_tanh_f(a->data, out->data, a->size); return; }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(a)) { opencl_tanh_f(a->data, out->data, a->size); return; }
+#endif
 #ifdef USE_OMP
     #pragma omp parallel for schedule(static) if(a->size > 4096)
 #endif
@@ -329,6 +571,16 @@ void tensor_tanh_t(const Tensor *a, Tensor *out) {
 }
 void tensor_tanh_grad(const Tensor *th, const Tensor *grad, Tensor *out) {
     CF_CHECK_SHAPE(th, grad); CF_CHECK_SHAPE(th, out);
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(th)) {
+        cuda_tanh_grad(th->data, grad->data, out->data, th->size); return;
+    }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(th)) {
+        opencl_tanh_grad(th->data, grad->data, out->data, th->size); return;
+    }
+#endif
 #ifdef USE_OMP
     #pragma omp parallel for schedule(static) if(th->size > 4096)
 #endif
@@ -343,6 +595,12 @@ void tensor_softmax(const Tensor *a, Tensor *out) {
     CF_CHECK_SHAPE(a, out);
     int rows = (a->ndim >= 2) ? a->shape[0] : 1;
     int cols = (int)(a->size / rows);
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(a)) { cuda_softmax_rows(a->data, out->data, rows, cols); return; }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(a)) { opencl_softmax_rows(a->data, out->data, rows, cols); return; }
+#endif
 #ifdef USE_OMP
     #pragma omp parallel for schedule(static) if(rows > 16)
 #endif
@@ -368,11 +626,19 @@ Tensor *tensor_reshape(Tensor *t, const int *new_shape, int new_ndim) {
     r->size      = t->size;
     r->ndim      = new_ndim;
     r->owns_data = 0;   /* view: does not own the data */
+    r->device    = t->device;
+    r->gpu_backend = t->gpu_backend;
     memcpy(r->shape, new_shape, new_ndim * sizeof(int));
     return r;
 }
 
 void tensor_fill(Tensor *t, float val) {
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(t)) { cuda_fill(t->data, val, t->size); return; }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(t)) { opencl_fill(t->data, val, t->size); return; }
+#endif
 #ifdef USE_OMP
     #pragma omp parallel for schedule(static) if(t->size > 4096)
 #endif
@@ -381,6 +647,22 @@ void tensor_fill(Tensor *t, float val) {
 
 void tensor_copy_data(Tensor *dst, const Tensor *src) {
     CF_CHECK(dst->size == src->size, "copy_data: size mismatch");
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(src) || CF_IS_CUDA(dst)) {
+        CF_CHECK(src->device == dst->device && src->gpu_backend == dst->gpu_backend,
+                 "copy_data: src/dst on different devices — use tensor_to_cpu/gpu first");
+        cuda_memcpy_d2d(dst->data, src->data, src->size);
+        return;
+    }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(src) || CF_IS_OPENCL(dst)) {
+        CF_CHECK(src->device == dst->device && src->gpu_backend == dst->gpu_backend,
+                 "copy_data: src/dst on different devices — use tensor_to_cpu/gpu first");
+        opencl_memcpy_d2d(dst->data, src->data, src->size);
+        return;
+    }
+#endif
     memcpy(dst->data, src->data, src->size * sizeof(float));
 }
 
