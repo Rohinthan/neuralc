@@ -192,6 +192,69 @@ make gpu          # build with OpenCL GPU support
 make clean        # remove all build files
 ```
 
+# make libneualc
+
+then you create this, before create a env .
+
+```bash
+ make libneuralc
+
+```
+Now create environment
+
+```bash
+
+python3 -m venv venv
+
+```
+
+you see in the root file can create venv file so active the venv
+
+```bash
+
+source venv/bin/activate
+
+```
+
+install numpy 
+
+```bash
+
+pip install numpy
+
+```
+
+go the python file 
+
+```bash
+
+cd python
+
+```
+
+run
+
+```bash
+
+python3 libneuralc.py
+
+```
+
+its create a libneuralc.so file in the root 
+
+
+
+
+
+
+
+~~~
+
+
+
+
+
+
 ---
 
 ## Roadmap
