@@ -7,6 +7,14 @@
 #include <omp.h>
 #endif
 
+#ifdef USE_CUDA
+#include "cuda_backend.h"
+#endif
+
+#ifdef USE_OPENCL
+#include "opencl_backend.h"
+#endif
+
 /* ── helpers ─────────────────────────────────────────────────────── */
 
 static Tensor *alloc2(int r, int c) {
@@ -16,6 +24,14 @@ static Tensor *alloc2(int r, int c) {
 static Tensor *alloc1(int n) {
     int sh[1] = {n};
     return tensor_zeros(sh, 1);
+}
+
+/* alloc2, but resident on the given device/backend (GPU alloc skips
+ * the host zero-fill tensor_zeros() would otherwise do) */
+static Tensor *alloc2_dev(int r, int c, CF_Device device, CF_GpuBackend backend) {
+    Tensor *t = alloc2(r, c);
+    if (device == CF_DEVICE_GPU) tensor_to_gpu_ex(t, backend);
+    return t;
 }
 
 /* ── lifecycle ───────────────────────────────────────────────────── */
@@ -64,6 +80,46 @@ void dense_init_weights(DenseLayer *l) {
     tensor_fill(l->b, 0.0f);
 }
 
+/* ── GPU residency ───────────────────────────────────────────────── */
+
+void dense_to_gpu(DenseLayer *l) {
+#if !defined(USE_CUDA) && !defined(USE_OPENCL)
+    (void)l;
+    cforge_error("dense_to_gpu: library was built without -DUSE_CUDA or "
+                 "-DUSE_OPENCL", __FILE__, __LINE__);
+#else
+    tensor_to_gpu(l->W);
+    tensor_to_gpu(l->b);
+    tensor_to_gpu(l->dW);
+    tensor_to_gpu(l->db);
+    /* z/a/dX are (re)allocated lazily by forward/backward on the
+     * device/backend that matches the input, so nothing to do here. */
+#endif
+}
+
+void dense_to_gpu_ex(DenseLayer *l, CF_GpuBackend backend) {
+    tensor_to_gpu_ex(l->W, backend);
+    tensor_to_gpu_ex(l->b, backend);
+    tensor_to_gpu_ex(l->dW, backend);
+    tensor_to_gpu_ex(l->db, backend);
+}
+
+void dense_to_cpu(DenseLayer *l) {
+#if !defined(USE_CUDA) && !defined(USE_OPENCL)
+    (void)l;
+    cforge_error("dense_to_cpu: library was built without -DUSE_CUDA or "
+                 "-DUSE_OPENCL", __FILE__, __LINE__);
+#else
+    tensor_to_cpu(l->W);
+    tensor_to_cpu(l->b);
+    tensor_to_cpu(l->dW);
+    tensor_to_cpu(l->db);
+    if (l->z) tensor_to_cpu(l->z);
+    if (l->a) tensor_to_cpu(l->a);
+    if (l->dX) tensor_to_cpu(l->dX);
+#endif
+}
+
 /* ── forward pass ────────────────────────────────────────────────── */
 /*
  *  z = input @ W^T + b          [batch, out]
@@ -79,13 +135,37 @@ void dense_forward(DenseLayer *l, const Tensor *input, Tensor *output) {
     /* cache input pointer (not owned) */
     l->input = (Tensor *)input;   /* safe: we won't free it */
 
-    /* allocate / resize z and a if needed */
-    if (!l->z || l->z->shape[0] != batch) {
+    /* allocate / resize z and a if needed, on the same device+backend as input */
+    if (!l->z || l->z->shape[0] != batch || l->z->device != input->device ||
+        l->z->gpu_backend != input->gpu_backend) {
         tensor_free(l->z); tensor_free(l->a);
-        l->z = alloc2(batch, out_f);
-        l->a = alloc2(batch, out_f);
+        l->z = alloc2_dev(batch, out_f, input->device, input->gpu_backend);
+        l->a = alloc2_dev(batch, out_f, input->device, input->gpu_backend);
     }
 
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(input)) {
+        CF_CHECK(CF_IS_CUDA(l->W),
+                 "dense_forward: layer weights are on CPU but input is on GPU "
+                 "— call dense_to_gpu() first");
+        cuda_linear_forward(input->data, l->W->data, l->b->data, l->z->data,
+                             batch, in_f, out_f);
+    } else
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(input)) {
+        CF_CHECK(CF_IS_OPENCL(l->W),
+                 "dense_forward: layer weights are on CPU but input is on GPU "
+                 "— call dense_to_gpu() first");
+        opencl_linear_forward(input->data, l->W->data, l->b->data, l->z->data,
+                               batch, in_f, out_f);
+    } else
+#endif
+    {
+    CF_CHECK(input->device == CF_DEVICE_CPU,
+             "dense_forward: input is GPU-resident on a backend this build "
+             "doesn't support — recompile with -DUSE_CUDA/-DUSE_OPENCL or "
+             "call tensor_to_cpu() first");
     /* z = input @ W^T  (W is [out,in], so W^T is [in,out])      */
     /* z[b,o] = sum_i input[b,i]*W[o,i] + b[o]                   */
     /* Parallel over batch — each b writes to different rows of z */
@@ -99,6 +179,7 @@ void dense_forward(DenseLayer *l, const Tensor *input, Tensor *output) {
                 acc += input->data[b*in_f + i] * l->W->data[o*in_f + i];
             l->z->data[b*out_f + o] = acc;
         }
+    }
     }
 
     /* activation */
@@ -127,9 +208,8 @@ void dense_backward(DenseLayer *l, const Tensor *grad_out) {
     int in_f  = l->in_features;
     int out_f = l->out_features;
 
-    /* allocate dz (same shape as z) */
-    int sh2[2] = {batch, out_f};
-    Tensor *dz = tensor_zeros(sh2, 2);
+    /* allocate dz (same shape as z, same device+backend as l->z) */
+    Tensor *dz = alloc2_dev(batch, out_f, l->z->device, l->z->gpu_backend);
 
     /* activation gradient */
     switch (l->activation) {
@@ -148,6 +228,39 @@ void dense_backward(DenseLayer *l, const Tensor *grad_out) {
             tensor_copy_data(dz, grad_out);
             break;
     }
+
+    /* dX: allocate/resize on the same device+backend as dz first, since
+     * the GPU path below needs it ready before the fused kernel call  */
+    if (!l->dX || l->dX->shape[0] != batch || l->dX->device != dz->device ||
+        l->dX->gpu_backend != dz->gpu_backend) {
+        tensor_free(l->dX);
+        l->dX = alloc2_dev(batch, in_f, dz->device, dz->gpu_backend);
+    }
+
+#ifdef USE_CUDA
+    if (CF_IS_CUDA(dz)) {
+        /* one fused call computes dW, db (already averaged by batch)
+         * and dX directly on the GPU — see cuda_linear_backward()   */
+        cuda_linear_backward(l->input->data, l->W->data, dz->data,
+                              l->dW->data, l->db->data, l->dX->data,
+                              batch, in_f, out_f);
+        tensor_free(dz);
+        return;
+    }
+#endif
+#ifdef USE_OPENCL
+    if (CF_IS_OPENCL(dz)) {
+        opencl_linear_backward(l->input->data, l->W->data, dz->data,
+                                l->dW->data, l->db->data, l->dX->data,
+                                batch, in_f, out_f);
+        tensor_free(dz);
+        return;
+    }
+#endif
+    CF_CHECK(dz->device == CF_DEVICE_CPU,
+             "dense_backward: gradient is GPU-resident on a backend this "
+             "build doesn't support — recompile with -DUSE_CUDA/-DUSE_OPENCL "
+             "or call tensor_to_cpu() first");
 
     /* dW = dz^T @ input  [out_f, in_f]                            */
     /* Parallel over o — each o writes to different row of dW      */
@@ -180,11 +293,6 @@ void dense_backward(DenseLayer *l, const Tensor *grad_out) {
 
     /* dX = dz @ W  [batch, in_f]                                  */
     /* Parallel over b — each b writes to different row of dX      */
-    if (!l->dX || l->dX->shape[0] != batch) {
-        tensor_free(l->dX);
-        int shx[2] = {batch, in_f};
-        l->dX = tensor_zeros(shx, 2);
-    }
     tensor_fill(l->dX, 0.0f);
 #ifdef USE_OMP
     #pragma omp parallel for schedule(static) if(batch * in_f > 1024)
