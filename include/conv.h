@@ -100,4 +100,12 @@ Tensor *flatten(Tensor *t);
 /* ── param count ────────────────────────────────────────────────── */
 int conv2d_param_count(const Conv2D *l);
 
+/* ── GPU residency ───────────────────────────────────────────────
+ * Moves W, b, dW, db to/from the GPU. After conv2d_to_gpu(), pass
+ * GPU-resident input tensors (see tensor_to_gpu()) to
+ * conv2d_forward/backward and maxpool2d_forward/backward as usual.
+ * Requires the library to be built with -DUSE_CUDA.               */
+void conv2d_to_gpu(Conv2D *l);
+void conv2d_to_cpu(Conv2D *l);
+
 #endif /* CONV_H */
