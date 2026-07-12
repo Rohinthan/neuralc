@@ -17,6 +17,10 @@
 #include <omp.h>
 #endif
 
+#ifdef USE_CUDA
+#include "cuda_backend.h"
+#endif
+
 void neuralc_init(void) {
 
     /* ── detect real CPU core count (ChatGPT + Gemini) ── */
@@ -71,16 +75,48 @@ void neuralc_init(void) {
         printf("[neuralc] CPU cores available : %d\n", max_cores);
         printf("[neuralc] OpenMP threads set  : %d (%s mode)\n",
                target_threads, mode_auto ? "AUTO" : "MANUAL");
-#ifdef USE_OPENCL
-        printf("[neuralc] GPU backend         : OpenCL enabled\n");
-#else
-        printf("[neuralc] GPU backend         : CPU only\n");
-#endif
         printf("[neuralc] =======================================\n\n");
     }
 #endif /* NEURALC_HAS_CONFIG */
 
 #endif /* USE_OMP */
+
+    /* ── GPU (CUDA) status ─────────────────────────────────────────
+     * Deliberately independent of the USE_OMP block above — GPU
+     * status must be reported (and any config/build mismatch must be
+     * warned about) even in builds without OpenMP.                 */
+#ifdef NEURALC_HAS_CONFIG
+#ifdef USE_CUDA
+    int gpu_ready = cuda_available();
+#else
+    int gpu_ready = 0;
+#endif
+
+    if (NEURALC_USE_GPU && !gpu_ready) {
+        fprintf(stderr,
+            "[neuralc] WARNING: config requests GPU acceleration "
+            "(NEURALC_USE_GPU=1), but %s\n"
+            "[neuralc]          Falling back to CPU — call "
+            "cf_cuda_enabled() before tensor_to_gpu() to avoid this.\n",
+#ifdef USE_CUDA
+            "no CUDA device was found at runtime."
+#else
+            "this binary was built without -DUSE_CUDA."
+#endif
+        );
+    }
+    if (NEURALC_DEBUG) {
+        printf("[neuralc] GPU backend         : %s\n",
+               gpu_ready ? "CUDA enabled, device available"
+               : (
+#ifdef USE_CUDA
+                   "CUDA enabled, but no device detected"
+#else
+                   "CPU only (built without -DUSE_CUDA)"
+#endif
+               ));
+    }
+#endif /* NEURALC_HAS_CONFIG */
 }
 
 /*
