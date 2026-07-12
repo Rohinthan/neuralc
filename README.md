@@ -192,7 +192,7 @@ make gpu          # build with OpenCL GPU support
 make clean        # remove all build files
 ```
 
-# make libneualc
+### make libneualc
 
 make libneuralc is create a connection between the c codes to ctype in python.
 
