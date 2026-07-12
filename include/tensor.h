@@ -6,12 +6,41 @@
 /* Maximum number of dimensions supported */
 #define TENSOR_MAX_DIMS 8
 
+/* ── device residency ─────────────────────────────────────────────
+ * CF_DEVICE_CPU: t->data is a host pointer, all ops run as before.
+ * CF_DEVICE_GPU: t->data is a CUDA device pointer. Do NOT dereference
+ *                it from host code (T1/T2 macros, tensor_get, etc.
+ *                are only valid on CPU tensors) — copy back with
+ *                tensor_to_cpu() first.
+ * Built WITHOUT -DUSE_CUDA, tensor_to_gpu()/tensor_to_cpu() are still
+ * declared but calling them is a hard error (cforge_error), so
+ * existing CPU-only code and builds are completely unaffected.    */
+typedef enum {
+    CF_DEVICE_CPU = 0,
+    CF_DEVICE_GPU = 1
+} CF_Device;
+
+/* Which GPU backend a CF_DEVICE_GPU tensor's `data` pointer belongs
+ * to. Meaningless when device == CF_DEVICE_CPU.
+ *   CF_GPU_CUDA:   data is a raw CUDA device pointer (cudaMalloc'd)
+ *   CF_GPU_OPENCL: data is a `cl_mem` handle, reinterpret-cast to
+ *                  float* (cl_mem is itself just an opaque pointer,
+ *                  so this is a same-size, valid cast — see
+ *                  opencl_backend.c) */
+typedef enum {
+    CF_GPU_NONE   = 0,
+    CF_GPU_CUDA   = 1,
+    CF_GPU_OPENCL = 2
+} CF_GpuBackend;
+
 typedef struct {
     float  *data;           /* flat row-major data buffer          */
     int     shape[TENSOR_MAX_DIMS];
     int     ndim;           /* number of dimensions                */
     size_t  size;           /* total number of elements            */
     int     owns_data;      /* 1 = free data on tensor_free()      */
+    CF_Device     device;      /* CF_DEVICE_CPU or CF_DEVICE_GPU   */
+    CF_GpuBackend gpu_backend;  /* which GPU backend, if any       */
 } Tensor;
 
 /* ── lifecycle ─────────────────────────────────────────────────── */
@@ -87,6 +116,39 @@ void tensor_softmax(const Tensor *a, Tensor *out);  /* row-wise for 2-D */
 Tensor *tensor_reshape(Tensor *t, const int *new_shape, int new_ndim);
 void    tensor_fill(Tensor *t, float val);
 void    tensor_copy_data(Tensor *dst, const Tensor *src);
+
+/* backend-check helpers — safe even when a backend isn't compiled in,
+ * since gpu_backend is always a valid field on Tensor. Public so
+ * conv.c/layer.c can guard against feeding a tensor to a kernel path
+ * (e.g. Conv2D) that doesn't support its backend yet. */
+#define CF_IS_CUDA(t)   ((t)->device == CF_DEVICE_GPU && (t)->gpu_backend == CF_GPU_CUDA)
+#define CF_IS_OPENCL(t) ((t)->device == CF_DEVICE_GPU && (t)->gpu_backend == CF_GPU_OPENCL)
+
+/* ── GPU residency (see cuda_backend.h / opencl_backend.h) ──────────
+ * tensor_to_gpu:     auto-picks a backend — CUDA if this build has
+ *                    -DUSE_CUDA and a device is available, else
+ *                    OpenCL if -DUSE_OPENCL and a device is
+ *                    available. In-place; returns t for chaining.
+ *                    No-op if already on GPU.
+ * tensor_to_gpu_ex:  same, but forces a specific backend — useful
+ *                    when both USE_CUDA and USE_OPENCL are compiled
+ *                    in and you want to pick explicitly (e.g. to
+ *                    test the OpenCL path on a box that also has an
+ *                    NVIDIA card).
+ * tensor_to_cpu:     mirror image — copies back to a fresh host
+ *                    buffer, frees device memory, sets device =
+ *                    CF_DEVICE_CPU. Works for either backend.
+ * cf_cuda_enabled:   1 if built with -DUSE_CUDA AND a CUDA device is
+ *                    available at runtime, else 0.
+ * cf_opencl_enabled: 1 if built with -DUSE_OPENCL AND an OpenCL
+ *                    device is available at runtime, else 0.
+ * Check these before calling tensor_to_gpu[_ex]() to fail gracefully
+ * instead of hitting cforge_error().                               */
+Tensor *tensor_to_gpu(Tensor *t);
+Tensor *tensor_to_gpu_ex(Tensor *t, CF_GpuBackend backend);
+Tensor *tensor_to_cpu(Tensor *t);
+int     cf_cuda_enabled(void);
+int     cf_opencl_enabled(void);
 
 /* ── utilities ──────────────────────────────────────────────────── */
 void tensor_print(const Tensor *t, const char *name);
