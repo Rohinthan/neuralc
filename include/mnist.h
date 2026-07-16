@@ -13,7 +13,7 @@
  *   wget http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz
  *   wget http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz
  *   wget http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz
- *   gunzip mnist/*.gz
+ *   cd mnist && gunzip *.gz
  *
  * File format:
  *   Images: [magic][n_images][rows][cols][pixels...]
