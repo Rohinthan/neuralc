@@ -33,8 +33,8 @@ int main(void) {
 
     /* ── build network ── */
     Network *net = nn_create();
-    nn_add_layer(net, dense_create(2, 8, ACT_RELU));
-    nn_add_layer(net, dense_create(8, 1, ACT_SIGMOID));
+    nn_add_dense(net, dense_create(2, 8, ACT_RELU));
+    nn_add_dense(net, dense_create(8, 1, ACT_SIGMOID));
     nn_print_summary(net);
 
     /* ── optimizer ── */
@@ -52,7 +52,7 @@ int main(void) {
 
     /* ── evaluation ── */
     printf("\n--- XOR Predictions ---\n");
-    nn_forward(net, X, pred);
+    nn_forward(net, X, pred, /*training=*/0);
     for (int i = 0; i < 4; i++)
         printf("  [%d XOR %d]  pred=%.4f  (expected %d)\n",
                (int)X->data[i*2], (int)X->data[i*2+1],
