@@ -256,4 +256,3 @@ Licensed under the [MIT License](./LICENSE) — free to use and modify.
 ## Author
 
 Built with curiosity and persistence — starting from scratch, evolving into a complete deep learning runtime.
-re
