@@ -26,7 +26,7 @@ What started as an experiment has evolved into a fully functional ML runtime cap
 | **Portability** | Runs on Linux, macOS, Windows, and embedded systems |
 | **Modularity** | Configurable, `menuconfig`-style build system |
 
-## Proven Results — MNIST (95.79% Accuracy)
+## Proven Results — MNIST (96.15% Accuracy)
 
 Trained on 60,000 handwritten digit images using only C:
 
