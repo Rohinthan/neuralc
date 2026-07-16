@@ -94,19 +94,34 @@ CF_GPU_CUDA   = 1
 CF_GPU_OPENCL = 2
 
 # ── C struct mirror (per tensor.h Tensor struct, field-for-field) ─────
+#
+# tensor.h now includes a tape-based autograd engine — Tensor grew four
+# new trailing fields (requires_grad, grad, node, view_base) beyond the
+# device-residency fields. `node` is left as an opaque c_void_p (GraphNode
+# isn't mirrored here — nothing in this file currently needs to read its
+# contents, only pass the Tensor pointer around). `view_base` is
+# self-referential (Tensor* pointing at another Tensor), so the class is
+# forward-declared before _fields_ is assigned, matching how tensor.h
+# itself forward-declares `struct Tensor` before defining it.
 
 TENSOR_MAX_DIMS = 8
 
 class _CTensor(ctypes.Structure):
-    _fields_ = [
-        ("data",        ctypes.POINTER(ctypes.c_float)),
-        ("shape",       ctypes.c_int * TENSOR_MAX_DIMS),
-        ("ndim",        ctypes.c_int),
-        ("size",        ctypes.c_size_t),
-        ("owns_data",   ctypes.c_int),
-        ("device",      ctypes.c_int),   # CF_Device
-        ("gpu_backend", ctypes.c_int),   # CF_GpuBackend
-    ]
+    pass
+
+_CTensor._fields_ = [
+    ("data",          ctypes.POINTER(ctypes.c_float)),
+    ("shape",         ctypes.c_int * TENSOR_MAX_DIMS),
+    ("ndim",          ctypes.c_int),
+    ("size",          ctypes.c_size_t),
+    ("owns_data",     ctypes.c_int),
+    ("device",        ctypes.c_int),   # CF_Device
+    ("gpu_backend",   ctypes.c_int),   # CF_GpuBackend
+    ("requires_grad", ctypes.c_int),
+    ("grad",          ctypes.POINTER(ctypes.c_float)),
+    ("node",          ctypes.c_void_p),                # GraphNode* (opaque)
+    ("view_base",     ctypes.POINTER(_CTensor)),
+]
 
 # ── activation / loss enums ────────────────────────────────────────────
 # NOTE: matches layer.h's Activation enum exactly. LOSS_* values are not
@@ -124,6 +139,16 @@ ACT_SOFTMAX = 4
 LOSS_MSE           = 0
 LOSS_BINARY_CROSS  = 1
 LOSS_CROSS_ENTROPY = 2
+
+# LayerType (nn.h) — Network is now heterogeneous: each slot is tagged
+# with one of these. Only Dense is wrapped in Python so far; the other
+# four (Dropout/BatchNorm/RNN/LSTM) have C-side support (nn.c dispatches
+# on all five) but no Python class here yet.
+LAYER_DENSE     = 0
+LAYER_DROPOUT   = 1
+LAYER_BATCHNORM = 2
+LAYER_RNN       = 3
+LAYER_LSTM      = 4
 
 # ── C function signatures ──────────────────────────────────────────────
 
@@ -143,6 +168,10 @@ def _setup_signatures():
     # ── tensor ops (tensor.h) ──
     _lib.tensor_add.restype     = None
     _lib.tensor_add.argtypes    = [P(_CTensor), P(_CTensor), P(_CTensor)]
+    _lib.tensor_sub.restype     = None
+    _lib.tensor_sub.argtypes    = [P(_CTensor), P(_CTensor), P(_CTensor)]
+    _lib.tensor_mul.restype     = None
+    _lib.tensor_mul.argtypes    = [P(_CTensor), P(_CTensor), P(_CTensor)]
     _lib.tensor_matmul.restype  = None
     _lib.tensor_matmul.argtypes = [P(_CTensor), P(_CTensor), P(_CTensor)]
     _lib.tensor_sum.restype     = ctypes.c_float
@@ -162,6 +191,28 @@ def _setup_signatures():
     # too since it's a generally useful zero-copy view operation)
     _lib.tensor_reshape.restype  = P(_CTensor)
     _lib.tensor_reshape.argtypes = [P(_CTensor), P(ctypes.c_int), ctypes.c_int]
+
+    # ── layout transform (tensor.c, confirmed) ──
+    # tensor_permute materializes a fresh, contiguous, OWNING tensor (a
+    # real data copy, unlike reshape/flatten's zero-copy view) and, per
+    # tensor.c, wires itself into the autograd tape automatically when
+    # its input requires_grad — same as tensor_add/sub/mul/matmul below.
+    _lib.tensor_permute.restype  = P(_CTensor)
+    _lib.tensor_permute.argtypes = [P(_CTensor), P(ctypes.c_int), ctypes.c_int]
+    _lib.tensor_permute_backward.restype  = None
+    _lib.tensor_permute_backward.argtypes = [P(_CTensor), P(ctypes.c_int), P(_CTensor)]
+
+    # ── autograd (tensor.h/.c, confirmed against tensor.c's actual tape
+    # implementation — see the Tensor.requires_grad_()/.backward() Python
+    # wrappers below for the full set of guards this needs) ──
+    _lib.tensor_requires_grad_.restype  = None
+    _lib.tensor_requires_grad_.argtypes = [P(_CTensor), ctypes.c_int]
+    _lib.tensor_backward.restype   = None
+    _lib.tensor_backward.argtypes  = [P(_CTensor)]
+    _lib.tensor_zero_grad.restype  = None
+    _lib.tensor_zero_grad.argtypes = [P(_CTensor)]
+    _lib.tensor_tape_clear.restype  = None
+    _lib.tensor_tape_clear.argtypes = []
 
     # ── GPU residency (tensor.h — confirmed against tensor.c) ──
     # tensor_to_gpu/_ex/tensor_to_cpu all return Tensor* (NOT void), and
@@ -190,12 +241,25 @@ def _setup_signatures():
     # training run — not independently re-verified against nn.c) ──
     _lib.nn_create.restype      = ctypes.c_void_p
     _lib.nn_create.argtypes     = []
+    # nn_add_layer's real signature is (Network*, LayerType, void*) — 3
+    # args, not 2. Calling it with only 2 (as an earlier version of this
+    # file did) leaves `type` reading garbage off the stack/registers,
+    # corrupting net->layers[i].type and causing nn_forward() to hit its
+    # "unrecognized LayerType" cforge_error() on the very first forward
+    # pass. nn_add_dense (the 2-arg convenience wrapper nn.c itself
+    # defines, and what demo.c actually calls) is what Network.add()
+    # uses below — kept correct and simple by construction.
     _lib.nn_add_layer.restype   = None
-    _lib.nn_add_layer.argtypes  = [ctypes.c_void_p, ctypes.c_void_p]
+    _lib.nn_add_layer.argtypes  = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+    _lib.nn_add_dense.restype   = None
+    _lib.nn_add_dense.argtypes  = [ctypes.c_void_p, ctypes.c_void_p]
     _lib.nn_free.restype        = None
     _lib.nn_free.argtypes       = [ctypes.c_void_p]
+    # nn_forward gained a 4th parameter (int training) — threaded into
+    # Dropout/BatchNorm's train()/eval() mode internally. Dense/RNN/LSTM
+    # ignore it, but it must always be passed.
     _lib.nn_forward.restype     = None
-    _lib.nn_forward.argtypes    = [ctypes.c_void_p, P(_CTensor), P(_CTensor)]
+    _lib.nn_forward.argtypes    = [ctypes.c_void_p, P(_CTensor), P(_CTensor), ctypes.c_int]
     _lib.nn_loss.restype        = ctypes.c_float
     _lib.nn_loss.argtypes       = [ctypes.c_int, P(_CTensor), P(_CTensor), P(_CTensor)]
     _lib.nn_backward.restype    = None
@@ -300,6 +364,54 @@ def cf_opencl_enabled() -> bool:
     device is available at runtime. Always safe to call."""
     return bool(_lib.cf_opencl_enabled())
 
+# ── autograd tape safety net ────────────────────────────────────────────
+#
+# tensor.c's tensor_free() deliberately does NOT touch t->node, and its own
+# comment explains why: a GraphNode's `parents` array is a set of raw
+# Tensor* pointers, and those same tensors may still be referenced as a
+# *parent* by other nodes further down the tape. Freeing a tensor that's
+# still a live dependency of the tape is a use-after-free the next time
+# tensor_backward() walks through it.
+#
+# In hand-written C (see test_autograd.c) this is naturally safe: every
+# tensor involved stays alive as a local C variable for as long as the
+# tape exists, and you free everything explicitly, in order, after
+# tensor_tape_clear(). Python has no equivalent guarantee — an
+# intermediate result from `a.mul(b)` that you don't assign to a
+# variable is otherwise eligible for garbage collection the moment the
+# expression finishes, even though the C tape may have just recorded it
+# as a node's output/parent.
+#
+# _tape_registry is a plain list holding an extra Python reference to
+# every Tensor that enters the graph (either a leaf via requires_grad_()
+# or an op's output once C confirms it recorded a node), for exactly as
+# long as the C tape might reference it. tape_clear() drops these extra
+# references at the same moment it tells C to release the tape, so
+# normal Python garbage collection resumes safely after that.
+_tape_registry = []
+
+def _pin_if_tracked(t):
+    """Keep a Tensor alive in Python for as long as the C tape might
+    reference it. Called on every op's output and on requires_grad_()."""
+    if t._ptr and t._ptr.contents.node:
+        _tape_registry.append(t)
+
+def tape_clear():
+    """
+    Releases the entire autograd computation graph — every GraphNode
+    recorded since the last clear — and detaches them from their output
+    tensors (per tensor.c: output->node is reset to NULL on each one).
+
+    Call this once you're done with a backward() pass and don't need to
+    run it again; retaining the graph across multiple backward() calls
+    without clearing is not supported by the C engine. This also drops
+    this module's extra Python references (see _tape_registry above),
+    so any intermediate tensors you didn't keep your own reference to
+    become eligible for normal garbage collection again.
+    """
+    _lib.tensor_tape_clear()
+    _tape_registry.clear()
+
 # ── helpers ──────────────────────────────────────────────────────────
 
 def _shape_arr(shape):
@@ -399,6 +511,47 @@ class Tensor:
         with a parent Tensor and cannot be moved between devices."""
         return not bool(self._ptr.contents.owns_data)
 
+    @property
+    def requires_grad(self) -> bool:
+        """Read-only view of the C-side flag. Set it via requires_grad_()."""
+        return bool(self._ptr.contents.requires_grad)
+
+    @property
+    def has_grad_history(self) -> bool:
+        """True if this tensor was produced by a tracked op (i.e. has a
+        GraphNode on the tape) — what tensor_backward() actually checks
+        before running. False for a graph leaf or an untracked tensor."""
+        return bool(self._ptr.contents.node)
+
+    @property
+    def grad(self):
+        """
+        This tensor's accumulated gradient as a numpy array, or None if
+        backward() hasn't been run (or this tensor isn't part of a graph).
+
+        Per tensor.c's grad_home(): a view (is_view == True) never
+        allocates its own grad buffer — any gradient aimed at it is
+        redirected to its parent/base tensor instead. This property
+        mirrors that lookup automatically (walking ._base, the same
+        relationship tensor.c calls view_base) so `some_view.grad` gives
+        you the real accumulated gradient rather than always None.
+        """
+        home_ptr = self._ptr
+        home_py  = self
+        # Walk the same view_base chain tensor.c's grad_home() uses,
+        # via our own ._base link (set by flatten()/permute() etc.)
+        while not home_ptr.contents.owns_data and home_py._base is not None:
+            home_py  = home_py._base
+            home_ptr = home_py._ptr
+        g = home_ptr.contents.grad
+        if not g:
+            return None
+        n = home_ptr.contents.size
+        buf = (ctypes.c_float * n).from_address(ctypes.addressof(g.contents))
+        arr = np.frombuffer(buf, dtype=np.float32).copy()
+        shape = [home_ptr.contents.shape[i] for i in range(home_ptr.contents.ndim)]
+        return arr.reshape(shape)
+
     def __repr__(self):
         return (f"neuralc.Tensor(shape={self.shape}, device={self.device!r}"
                 f"{', view=True' if self.is_view else ''})")
@@ -406,9 +559,14 @@ class Tensor:
     # ── ops ──
 
     def sum(self):
+        """Returns a plain Python float — NOT a Tensor, so this is not
+        autograd-differentiable and can't be used directly as a
+        tensor_backward() loss. See backward()'s docstring for how to
+        reduce a tracked tensor down to a valid scalar loss Tensor."""
         return float(_lib.tensor_sum(self._ptr))
 
     def mean(self):
+        """Same caveat as sum() — returns a float, not a Tensor."""
         return float(_lib.tensor_mean(self._ptr))
 
     def argmax(self):
@@ -495,6 +653,147 @@ class Tensor:
         return self
 
 # ── Dense layer ────────────────────────────────────────────────────────
+
+    # ── autograd ──
+    # NOTE ON LIFETIME: tensor.c's tensor_free() explicitly does not touch
+    # a tensor's tape node, because the global tape may still reference it
+    # as some other node's *parent* — freeing it early is a use-after-free
+    # waiting to happen on the next backward(). Every method below that
+    # can cause C to record a tape node pins the resulting Tensor into
+    # the module-level _tape_registry (see its comment above) so Python's
+    # garbage collector can't free it out from under the tape. Call
+    # nc.tape_clear() when you're done with a graph to release both the
+    # C-side tape and these extra Python references together.
+
+    def requires_grad_(self, requires_grad: bool = True):
+        """
+        Opt this leaf tensor into gradient tracking (PyTorch-style
+        trailing underscore = in-place). Only meaningful for CPU tensors
+        — tensor.c's autograd math is CPU-only, and setting this on a
+        GPU tensor would otherwise hard-exit via cforge_error(); guarded
+        here instead.
+        """
+        if requires_grad and self.device != "cpu":
+            raise RuntimeError(
+                "requires_grad_(True) requires a CPU-resident tensor — "
+                "neuralc's autograd engine only supports CPU tensors. "
+                "Call .to('cpu') first."
+            )
+        _lib.tensor_requires_grad_(self._ptr, ctypes.c_int(1 if requires_grad else 0))
+        if requires_grad:
+            _tape_registry.append(self)
+        return self
+
+    def zero_grad(self):
+        """Zeroes (without freeing) this tensor's gradient buffer — call
+        between training steps, before the next backward()."""
+        _lib.tensor_zero_grad(self._ptr)
+        return self
+
+    def backward(self):
+        """
+        Runs reverse-mode autograd from this tensor back through every
+        tracked op that produced it, accumulating into each leaf's .grad.
+
+        This tensor must be a scalar (size == 1) with recorded graph
+        history (has_grad_history == True) — both checked here with a
+        clean Python exception rather than letting tensor_backward()'s
+        own C-side checks hard-exit the process. tensor_sum()/.mean()
+        return plain floats (not Tensors, see their docstrings) so they
+        can't produce a valid loss here — reduce to a tracked scalar the
+        way test_autograd.c does instead, e.g.:
+            ones = Tensor.zeros([n, 1]).fill(1.0)
+            loss = x.reshape([1, n]).matmul(ones)   # tracked, size==1
+            loss.backward()
+        """
+        if self.size != 1:
+            raise ValueError(
+                f"backward() requires a scalar tensor (size == 1), got "
+                f"size {self.size}. Reduce it to a scalar via a tracked "
+                f"op first — see this method's docstring."
+            )
+        if not self.has_grad_history:
+            raise RuntimeError(
+                "backward() requires recorded graph history — this tensor "
+                "wasn't produced by a tracked op (no input had "
+                "requires_grad_(True) set)."
+            )
+        _lib.tensor_backward(self._ptr)
+
+    # ── tracked binary/unary ops ──
+    # Each of these mirrors a tensor.c op that auto-tapes itself (via
+    # record_elwise2()/tape_new_node()) whenever an input requires_grad —
+    # zero overhead otherwise, exactly as tensor.c's own comments state.
+
+    def add(self, other: "Tensor") -> "Tensor":
+        out = Tensor.zeros(list(self.shape))
+        _lib.tensor_add(self._ptr, other._ptr, out._ptr)
+        _pin_if_tracked(out)
+        return out
+
+    def sub(self, other: "Tensor") -> "Tensor":
+        out = Tensor.zeros(list(self.shape))
+        _lib.tensor_sub(self._ptr, other._ptr, out._ptr)
+        _pin_if_tracked(out)
+        return out
+
+    def mul(self, other: "Tensor") -> "Tensor":
+        """Elementwise (Hadamard) product, not matrix multiply — use
+        matmul() for that."""
+        out = Tensor.zeros(list(self.shape))
+        _lib.tensor_mul(self._ptr, other._ptr, out._ptr)
+        _pin_if_tracked(out)
+        return out
+
+    def matmul(self, other: "Tensor") -> "Tensor":
+        """2D matrix multiply: [M,K] @ [K,N] -> [M,N]."""
+        m, k  = self.shape
+        k2, n = other.shape
+        if k != k2:
+            raise ValueError(f"matmul shape mismatch: {self.shape} @ {other.shape}")
+        out = Tensor.zeros([m, n])
+        _lib.tensor_matmul(self._ptr, other._ptr, out._ptr)
+        _pin_if_tracked(out)
+        return out
+
+    def permute(self, axis_order) -> "Tensor":
+        """
+        General N-D axis permutation (e.g. [Batch,Seq,Feat] ->
+        [Seq,Batch,Feat] via axis_order=[1,0,2]). Per tensor.c this
+        MATERIALIZES a fresh, contiguous, owning tensor (a real data
+        copy, not a zero-copy view like flatten()/reshape()) — and, like
+        add/sub/mul/matmul, tapes itself automatically if this tensor
+        requires_grad. CPU only.
+        """
+        arr = _shape_arr(axis_order)
+        ptr = _lib.tensor_permute(self._ptr, arr, len(axis_order))
+        if not ptr:
+            raise MemoryError("tensor_permute failed")
+        out = Tensor(ptr, owned=True)
+        _pin_if_tracked(out)
+        return out
+
+    def permute_backward(self, axis_order, grad_out: "Tensor") -> "Tensor":
+        """
+        Manual/standalone counterpart to permute() for hand-rolled
+        backward passes outside the autograd tape (permute() already
+        wires itself into the tape automatically for normal use — you
+        don't need this if you're calling .backward()). Scatters
+        grad_out (shaped like the permuted output) back into a
+        freshly-zeroed tensor shaped like this tensor (the pre-permute
+        original), using the inverse axis mapping.
+        """
+        grad_in = Tensor.zeros(list(self.shape))
+        arr = _shape_arr(axis_order)
+        _lib.tensor_permute_backward(grad_out._ptr, arr, grad_in._ptr)
+        return grad_in
+
+    # Operator overloads — thin aliases over the named methods above, for
+    # PyTorch-style expression syntax (a + b, a * b, a @ b).
+    def __add__(self, other): return self.add(other)
+    def __sub__(self, other): return self.sub(other)
+    def __mul__(self, other): return self.mul(other)
+    def __matmul__(self, other): return self.matmul(other)
 
 class Dense:
     def __init__(self, in_features, out_features, activation=ACT_RELU):
@@ -730,8 +1029,18 @@ class Network:
         self._grad = None
 
     def add(self, layer):
-        _lib.nn_add_layer(ctypes.c_void_p(self._ptr),
-                          ctypes.c_void_p(layer._ptr))
+        """Add a Dense layer to the network. (Dropout/BatchNorm/RNN/LSTM
+        are supported on the C side per nn.h/nn.c but have no Python
+        wrapper class here yet.)"""
+        if not isinstance(layer, Dense):
+            raise TypeError(
+                f"Network.add() currently only supports Dense layers, "
+                f"got {type(layer).__name__}. nn.c also supports Dropout/"
+                f"BatchNorm/RNN/LSTM via nn_add_dropout/nn_add_batchnorm/"
+                f"nn_add_rnn/nn_add_lstm, but no Python wrapper exists for "
+                f"them yet."
+            )
+        _lib.nn_add_dense(ctypes.c_void_p(self._ptr), ctypes.c_void_p(layer._ptr))
         self._out_dim = None
 
     def _ensure_buffers(self, batch, out_dim):
@@ -740,7 +1049,13 @@ class Network:
             self._pred = Tensor.zeros([batch, out_dim])
             self._grad = Tensor.zeros([batch, out_dim])
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, training: bool = False) -> Tensor:
+        """
+        Run inference (training=False by default). `training` only
+        affects Dropout/BatchNorm layers (train() vs eval() mode) — has
+        no effect on Dense. train_step() always runs its internal
+        forward pass with training=1 on the C side regardless of this.
+        """
         batch = x.shape[0]
         if self._out_dim is None:
             raise RuntimeError(
@@ -749,7 +1064,7 @@ class Network:
             )
         self._ensure_buffers(batch, self._out_dim)
         _lib.nn_forward(ctypes.c_void_p(self._ptr),
-                        x._ptr, self._pred._ptr)
+                        x._ptr, self._pred._ptr, ctypes.c_int(1 if training else 0))
         return self._pred.clone()
 
     def set_output_dim(self, n: int):
