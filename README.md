@@ -1,6 +1,6 @@
 # neuralc
 
-A fast, lightweight deep learning library written in pure C — no dependencies, no bloat.
+A lightweight deep learning library written in pure C — no dependencies, no bloat.
 
 ---
 
