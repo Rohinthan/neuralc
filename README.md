@@ -32,7 +32,8 @@ Trained on 60,000 handwritten digit images using only C:
 
 ```
 
-<img width="707" height="512" alt="image" src="https://github.com/user-attachments/assets/e82b1902-22d9-47f2-8fc9-f5a0ba2f594f" />
+<img width="707" height="512" alt="Screenshot From 2026-07-16 15-07-02" src="https://github.com/user-attachments/assets/79103194-223c-4e8f-85e4-6e2c72665863" />
+
 
 ```
 
@@ -229,3 +230,4 @@ Licensed under the [MIT License](./LICENSE) — free to use and modify.
 ## Author
 
 Built with curiosity and persistence — starting from scratch, evolving into a complete deep learning runtime.
+re
