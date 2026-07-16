@@ -67,7 +67,7 @@ static float evaluate(Network *net, MNISTData *data) {
                data->labels->data + s * 10,
                (size_t)actual * 10 * sizeof(float));
 
-        nn_forward(net, X, out);
+        nn_forward(net, X, out, /*training=*/0);
 
         int preds[BATCH_SIZE], trues[BATCH_SIZE];
         tensor_argmax_rows(out, preds);
@@ -117,9 +117,9 @@ int main(void) {
     DenseLayer *l2 = dense_create(256, 128, ACT_RELU);
     DenseLayer *l3 = dense_create(128, 10, ACT_SOFTMAX);
 
-    nn_add_layer(net, l1);
-    nn_add_layer(net, l2);
-    nn_add_layer(net, l3);
+    nn_add_dense(net, l1);
+    nn_add_dense(net, l2);
+    nn_add_dense(net, l3);
 
     Adam *opt = adam_create(LR, 0.9f, 0.999f, 1e-8f, 1e-4f);
 
@@ -200,7 +200,7 @@ int main(void) {
         memcpy(xi->data,
                test->images->data + i * 784,
                784 * sizeof(float));
-        nn_forward(net, xi, pi);
+        nn_forward(net, xi, pi, /*training=*/0);
         int pred   = tensor_argmax(pi);
         int actual = (int)test->labels_raw->data[i];
         printf("  %-6d %-10d %-10d %s\n",
