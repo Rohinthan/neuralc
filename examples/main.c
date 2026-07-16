@@ -111,8 +111,8 @@ static void demo_xor(void) {
     }
 
     Network *net = nn_create();
-    nn_add_layer(net, dense_create(2, 16, ACT_RELU));
-    nn_add_layer(net, dense_create(16, 1, ACT_SIGMOID));
+    nn_add_dense(net, dense_create(2, 16, ACT_RELU));
+    nn_add_dense(net, dense_create(16, 1, ACT_SIGMOID));
     nn_print_summary(net);
 
     Adam *opt = adam_create(0.01f, 0.9f, 0.999f, 1e-8f, 0.0f);
@@ -124,7 +124,7 @@ static void demo_xor(void) {
             printf("  Epoch %4d  loss=%.6f\n", ep, loss);
     }
 
-    nn_forward(net, X, pred);
+    nn_forward(net, X, pred, /*training=*/0);
     float acc = nn_accuracy_binary(pred, Y);
     printf("  Accuracy: %.1f%%\n", acc * 100.0f);
     printf("  Predictions:\n");
@@ -317,8 +317,8 @@ static void demo_optimizers(void) {
 
     for (int i = 0; i < 3; i++) {
         Network *net = nn_create();
-        nn_add_layer(net, dense_create(2, 8, ACT_RELU));
-        nn_add_layer(net, dense_create(8, 1, ACT_SIGMOID));
+        nn_add_dense(net, dense_create(2, 8, ACT_RELU));
+        nn_add_dense(net, dense_create(8, 1, ACT_SIGMOID));
         float loss = train_xor_with(names[i], net, 2000, lrs[i]);
         printf("  %-10s lr=%.4f  final_loss=%.6f\n",
                names[i], lrs[i], loss);
@@ -336,8 +336,8 @@ static void demo_save_load(void) {
 
     /* reload XOR weights saved in section 2 */
     Network *net = nn_create();
-    nn_add_layer(net, dense_create(2, 16, ACT_RELU));
-    nn_add_layer(net, dense_create(16,  1, ACT_SIGMOID));
+    nn_add_dense(net, dense_create(2, 16, ACT_RELU));
+    nn_add_dense(net, dense_create(16,  1, ACT_SIGMOID));
 
     if (nn_load(net, "xor_weights.bin") == 0) {
         printf("  Loaded xor_weights.bin\n");
@@ -349,7 +349,7 @@ static void demo_save_load(void) {
             X->data[i*2]=X_d[i][0];
             X->data[i*2+1]=X_d[i][1];
         }
-        nn_forward(net, X, pred);
+        nn_forward(net, X, pred, /*training=*/0);
         printf("  Reloaded predictions:\n");
         for (int i=0;i<4;i++)
             printf("    [%d XOR %d] = %.4f\n",
