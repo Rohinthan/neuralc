@@ -1,358 +1,231 @@
 # neuralc
-> A fast, lightweight deep learning library written in C — no dependencies, no bloat.
----
 
-
-## What is neuralc
-
-**neuralc** is an open-source neural network and tensor library written in C.  
-It is **not** a copy or port of TensorFlow or PyTorch — it is an original library built from scratch, inspired by the same ideas but designed for:
-
-- **Raw speed** — C runs close to the metal, no Python overhead
-- **Simplicity** — readable source code anyone can understand and modify
-- **Zero dependencies** — only needs a C compiler and `libm`
-- **Portability** — runs on Linux, macOS, Windows, embedded systems
+A fast, lightweight deep learning library written in pure C — no dependencies, no bloat.
 
 ---
 
-## Creator thoughts 
+## Overview
 
-- something i tell - this project created the main purpose is c doesn't have a native libraries like tensorflow and pytorch but have some. Tensorflow / pytorch is heavy frameworks and need python. So i decided to build a lightweight library for just fun , i start the project i dont know its work or not , but now its working, so programers and contributors please help to develop this project for create a optimized neural network library for c. thank you - by the creator .     
+**neuralc** is an open-source neural network and tensor computation library built entirely in C.
 
----
+It is not a wrapper, port, or binding of an existing framework like PyTorch or TensorFlow. It is a from-scratch implementation focused on performance, simplicity, and full control over low-level execution.
 
-##  Proven on Real Data — 95.79% MNIST Accuracy
+## Motivation
 
-neuralc trained on 60,000 real handwritten digit images in C:
+Most modern ML frameworks are Python-dependent, large, complex, and difficult to embed in low-level systems. neuralc explores a different approach: build a lightweight, fully controllable deep learning engine in C that exposes how neural networks actually work under the hood.
 
-```
-Epoch  1   loss=0.4148   train=87.8%   test=94.0%
-Epoch  5   loss=0.2371   train=93.4%   test=95.1%
-Epoch 14   loss=0.2296   train=93.7%   test=95.8%  ← best
-Epoch 20   loss=0.2274   train=93.7%   test=95.2%
+What started as an experiment has evolved into a fully functional ML runtime capable of training real models on real datasets.
 
-Best test accuracy: 95.79%
-```
+## Design Goals
 
-See [MNIST.md](MNIST.md) for full setup guide and contributor tasks.
-
----
-
-## Features (v0.1)
-
-| Feature | Status |
+| Goal | Description |
 |---|---|
-| Multi-dimensional Tensors | ✅ Done |
-| Element-wise math ops | ✅ Done |
-| Matrix multiply | ✅ Done |
-| Dense (fully-connected) layers | ✅ Done |
-| ReLU, Sigmoid, Tanh, Softmax | ✅ Done |
-| Backpropagation | ✅ Done |
-| SGD + Momentum | ✅ Done |
-| Adam optimizer | ✅ Done |
-| RMSProp optimizer | ✅ Done |
-| Gradient clipping | ✅ Done |
-| MSE / BCE / Cross-Entropy loss | ✅ Done |
-| Save & load weights | ✅ Done |
-| Dropout | ✅ Done |
-| Batch Normalization | ✅ Done |
-| Convolutional layers (CNN) | ✅ Done |
-| MaxPool2D + Flatten | ✅ Done |
-| RNN / LSTM | ✅ Done |
-| CSV data loader | ✅ Done |
-| MNIST data loader | ✅ Done |
-| MNIST demo (95.79% accuracy) | ✅ Done |
-| OpenMP multi-core support | ✅ Done |
-| Python bindings (ctypes) | ✅ Done |
-| GPU support via OpenCL | ✅ Done |
+| **Performance-first** | Runs close to the metal with minimal overhead |
+| **Simplicity** | Clean, readable C code |
+| **Zero dependencies** | Requires only a C compiler and `libm` |
+| **Portability** | Runs on Linux, macOS, Windows, and embedded systems |
+| **Modularity** | Configurable, `menuconfig`-style build system |
+
+## Proven Results — MNIST (95.79% Accuracy)
+
+Trained on 60,000 handwritten digit images using only C:
+
+```
+
+<img width="707" height="512" alt="image" src="https://github.com/user-attachments/assets/e82b1902-22d9-47f2-8fc9-f5a0ba2f594f" />
+
+```
 
 
----
+See [`MNIST.md`](./MNIST.md) for full details.
 
-   
-## Quick Start
+## Features
+
+**Core Engine**
+- Multi-dimensional tensor system
+- Element-wise operations
+- Matrix multiplication
+
+**Neural Networks**
+- Dense (fully connected) layers
+- CNN (Conv2D, MaxPool, Flatten)
+- RNN & LSTM (with BPTT)
+
+**Activations**
+- ReLU, Sigmoid, Tanh, Softmax
+
+**Training**
+- Backpropagation
+- Gradient clipping
+- Loss functions: MSE, BCE, Cross-Entropy
+
+**Optimizers**
+- SGD with Momentum
+- Adam
+- RMSProp
+
+**Data & Utilities**
+- CSV data loader
+- MNIST dataset support
+- Binary model save/load
+
+**Performance**
+- OpenMP multi-core support
+- Python bindings via `ctypes`
+- OpenCL GPU backend
+- CUDA backend *(in progress)*
+
+## Build & Run
 
 ### Requirements
-- GCC or Clang (C11 or later)
-- `libm` (standard math library, included on all platforms)
 
-### Build & Run
+- GCC or Clang (C11+)
+- `libm`
+
+### Build
 
 ```bash
 git clone https://github.com/Rohinthan/neuralc.git
 cd neuralc
 make
-./demo        # XOR training demo
-./neuralc     # full feature demo (all 7 sections)
+```
+
+### Run Examples
+
+```bash
+./demo        # XOR demo
+./neuralc     # full feature demo
 ```
 
 ### MNIST Demo
 
 ```bash
-bash mnist/download.sh    # download dataset (~60MB)
+bash mnist/download.sh
 make mnist_demo
-./mnist_demo              # trains to 95.79% accuracy
+./mnist_demo
 ```
 
 ### RNN / LSTM Demo
 
 ```bash
 make rnn_demo
-./rnn_demo                # sine wave prediction
+./rnn_demo
 ```
 
-### Expected Output (XOR)
+## Python Bindings
 
-```
-=== Network Summary ===
-  Layer 0: Dense(2 -> 8, ReLU)  params=24
-  Layer 1: Dense(8 -> 1, Sigmoid)  params=9
-  Total params: 33
-=======================
-Epoch    0  loss=0.535502
-Epoch  500  loss=0.002831
-Epoch 5000  loss=0.000015
+```bash
+make libneuralc
 
---- XOR Predictions ---
-  [0 XOR 0]  pred=0.0000  (expected 0)
-  [0 XOR 1]  pred=1.0000  (expected 1)
-  [1 XOR 0]  pred=1.0000  (expected 1)
-  [1 XOR 1]  pred=0.0000  (expected 0)
+python3 -m venv venv
+source venv/bin/activate
+pip install numpy
+
+cd python
+python3 neuralc.py
 ```
 
----
+This will:
+- Load the shared library (`libneuralc.so`)
+- Run training from Python
+- Confirm backend availability
 
-## Usage Example
+## Configuration System
+
+neuralc includes a `menuconfig`-style build system:
+
+```bash
+make config
+```
+
+This generates `neuralc_config.h`, used for compile-time control:
 
 ```c
-#include "tensor.h"
-#include "layer.h"
-#include "nn.h"
-#include "optimizer.h"
-
-// Build a network
-Network *net = nn_create();
-nn_add_layer(net, dense_create(2, 8, ACT_RELU));
-nn_add_layer(net, dense_create(8, 1, ACT_SIGMOID));
-
-// Create optimizer
-Adam *opt = adam_create(0.01f, 0.9f, 0.999f, 1e-8f, 0.0f);
-
-// Training loop
-for (int ep = 0; ep < 5000; ep++) {
-    float loss = nn_train_step(net, X, Y, LOSS_BINARY_CROSS, pred, grad);
-    nn_clip_gradients(net, 5.0f);   // prevent exploding gradients
-    adam_step(opt, net);
-}
-
-// Save weights
-nn_save(net, "model.bin");
-
-// Cleanup
-nn_free(net);
-adam_free(opt);
+#ifdef USE_CUDA
+    // GPU backend
+#else
+    // CPU fallback
+#endif
 ```
 
----
+**Benefits:**
+- Portable across systems
+- GPU/CPU switching
+- Debug and performance tuning
+- Clean, modular builds
 
-## File Structure
+## Project Structure
 
 ```
 neuralc/
-├── include/          ← .h files (tensor, layer, nn, etc.)
-├── src/              ← .c files (tensor, layer, nn, etc.)
-├── config/           ← NEW config UI folder
-│   ├── config_ui.h
-│   ├── config_ui.c
-│   ├── neuralc_config_main.c
-│   ├── neuralc_init.h
-│   ├── neuralc_init.c
-│   └── presets/      ← future preset configs
-├── examples/         ← demo programs
-├── tests/            ← test files
-├── build/            ← compiled .o files (auto-created)
-├── python/           ← Python bindings
-├── mnist/            ← dataset scripts
-├── Makefile          ← updated 
-└── neuralc_config.h  ← generated by menuconfig (stays at root)
+├── include/        # headers
+├── src/            # core implementation
+├── config/         # configuration system
+├── examples/       # demos
+├── tests/          # test cases
+├── python/         # Python bindings
+├── mnist/          # dataset tools
+├── build/          # compiled objects
+├── Makefile
+└── neuralc_config.h
 ```
-
----
 
 ## Build Targets
 
-```bash
-make              # build everything
-make config       # configure the threads manually
-make mnist_demo   # MNIST digit recognition
-make rnn_demo     # RNN + LSTM demo
-make omp          # build with OpenMP multi-core
-make libneuralc   # build shared library for Python
-make gpu          # build with OpenCL GPU support
-make clean        # remove all build files
-```
+| Target | Description |
+|---|---|
+| `make` | Build all |
+| `make config` | Configure features |
+| `make mnist_demo` | MNIST training |
+| `make rnn_demo` | Sequence models |
+| `make omp` | OpenMP support |
+| `make gpu` | OpenCL backend |
+| `make libneuralc` | Shared library |
+| `make clean` | Clean build artifacts |
 
-### make libneualc
+## GPU Development
 
-make libneuralc is create a connection between the c codes to ctype in python.
+CUDA backend support is currently under active development:
 
-```bash
+- `cuda_backend.cu`
+- `cuda_backend.h`
 
- make libneuralc
-
-```
-
-the file can create a output files -o
-
-Now create environment:
-
-```bash
-
-python3 -m venv venv
-
-```
-
-you see in the root file can create venv file so active the virutal Environment :
-
-```bash
-
-source venv/bin/activate
-
-```
-
-install numpy 
-
-```bash
-
-pip install numpy
-
-```
-
-And go the python file using ::
-
-```bash
-
-cd python
-
-```
-
-run
-
-```bash
-
-python3 neuralc.py
-
-```
-Should see like :
-
-
-``` 
-neuralc Python bindings loaded!
-Library: /home/raccoon/Music/neuralc/libneuralc.so
-CUDA available:   False
-OpenCL available: False
-
-Training XOR...
-  Epoch    0  loss=0.767939
-  Epoch  500  loss=0.349011
-  Epoch 1000  loss=0.347207
-  Epoch 1500  loss=0.346828
-  Epoch 2000  loss=0.346740
-  Epoch 2500  loss=0.346671
-  Epoch 3000  loss=0.346631
-
-Weights saved to xor_from_python.bin
-Done! neuralc Python bindings working.   // show the status 
-
-Smoke-testing Conv2D + MaxPool2D + flatten (CPU)...
-  conv output shape:   (2, 4, 8, 8)
-  pooled output shape: (2, 4, 4, 4)
-  flattened shape:     (2, 64)
-  conv2d param_count:  40
-
-```
-
-come back in neuralc folder using " cd .. "and check 
-
-```bash
-
-file libneuralc.so
-
-```
-
-its show like :
-
-``` bash
-
-libneuralc.so: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, BuildID[sha1]=d807e486fed8bc5bac0aea90176a6e34b6a1dda1, not stripped
-
-```
- That output confirms the library is completely healthy.
-
-   So, his  confirming the exact chain that makes neuralc.py work — a valid, correctly-architected shared library, with its function names intact, ready for dlopen()/ctypes.CDLL() to load and look up functions in by name. Nothing here is a problem; it's the healthy fingerprint of a working build.
-
-
-~~~
-
----
+Designed for:
+- Custom CUDA kernels
+- Clean backend abstraction (CPU ↔ GPU)
+- Future performance optimization
 
 ## Roadmap
 
-### ✅ v0.1 — Foundation (Complete)
-- [x] Tensor engine + math ops
-- [x] Dense layers + backpropagation
-- [x] SGD, Adam, RMSProp optimizers
-- [x] Gradient clipping
-- [x] Save & load weights
-
-### ✅ v0.2 — Regularization & Data (Complete)
-- [x] Dropout layer
-- [x] Batch Normalization
-- [x] CSV data loader
-- [x] MNIST data loader + demo (95.79% accuracy)
-
-### ✅ v0.3 — CNN Support (Complete)
-- [x] Conv2D layer
-- [x] MaxPool2D + Flatten
-- [x] MNIST demo
-
-### ✅ v0.4 — Performance (Complete)
-- [x] OpenMP multi-core parallelism
-- [x] Python bindings via ctypes
+- [x] Core tensor engine
+- [x] CNN / RNN / LSTM support
+- [x] OpenMP parallelism
+- [x] Python bindings
 - [x] OpenCL GPU backend
-
-### ✅ v0.5 — Sequences (Complete)
-- [x] Vanilla RNN layer
-- [x] LSTM layer
-- [x] Backpropagation Through Time (BPTT)
-
----
-
-~~~
-
-## new 
-
-Added - cuda_backend.cu
-      - cuda_backend.h
-
-For supporting the GPU's , if you have a gpu test and report support or not , its surely support . but i dont have a graphics card to check.
-
+- [ ] CUDA kernel optimization
+- [ ] Advanced autograd improvements
+- [ ] Model export formats
 
 ## Contributing
 
-We welcome all contributors! See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.  
-Good first issues are labeled `good first issue` on GitHub.
+Contributions are welcome!
 
----
+1. Check [`CONTRIBUTING.md`](./CONTRIBUTING.md)
+2. Look for issues tagged `good first issue`
+3. Help improve performance, features, and GPU support
+
+## Why neuralc?
+
+Use neuralc if you want to:
+- Learn how deep learning works internally
+- Build ML systems without Python
+- Run neural networks in low-level environments
+- Experiment with custom backends (CPU/GPU)
 
 ## License
 
-MIT License — free to use, modify, and distribute.
+Licensed under the [MIT License](./LICENSE) — free to use and modify.
 
----
+## Author
 
-## Why not just use TensorFlow or PyTorch?
-
-Those are incredible libraries — but they are massive, Python-first, and hard to embed.  
-**neuralc** is for people who want to learn how neural networks *really* work at the C level,
-or embed ML into firmware, games, or systems without Python.
+Built with curiosity and persistence — starting from scratch, evolving into a complete deep learning runtime.
