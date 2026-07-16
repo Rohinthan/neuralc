@@ -31,8 +31,34 @@ What started as an experiment has evolved into a fully functional ML runtime cap
 Trained on 60,000 handwritten digit images using only C:
 
 ```
+Building network...
 
-<img width="707" height="512" alt="Screenshot From 2026-07-16 15-07-02" src="https://github.com/user-attachments/assets/79103194-223c-4e8f-85e4-6e2c72665863" />
+  Epoch  Train Loss   Train Acc    Test Acc  
+  ────────────────────────────────────────────
+  1      0.3114       91.4        % 94.3      %
+  2      0.2107       94.3        % 94.6      %
+  3      0.1967       94.6        % 95.6      %
+  4      0.1865       95.1        % 95.7      %
+  5      0.1790       95.3        % 95.8      %
+  6      0.1773       95.3        % 95.9      %
+  7      0.1749       95.4        % 95.2      %
+  8      0.1733       95.5        % 95.8      %
+  9      0.1700       95.6        % 96.0      %
+  10     0.1705       95.5        % 95.8      %
+  11     0.1690       95.7        % 95.8      %
+  12     0.1676       95.6        % 95.9      %
+  13     0.1672       95.7        % 95.6      %
+  14     0.1669       95.7        % 95.9      %
+  15     0.1660       95.7        % 95.8      %
+  16     0.1658       95.7        % 96.2      %
+  17     0.1655       95.7        % 96.0      %
+  18     0.1667       95.7        % 96.1      %
+  19     0.1648       95.8        % 95.8      %
+  20     0.1651       95.8        % 95.7      %
+
+  Best test accuracy: 96.15%
+  Model saved: mnist_best.bin
+
 
 
 ```
