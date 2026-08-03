@@ -251,8 +251,6 @@ Use neuralc if you want to:
 
 ## License
 
-Licensed under the [MIT License](./LICENSE) — free to use and modify.
+Distributed under the Apache License 2.0. See LICENSE for details.
 
-## Author
 
-Built with curiosity and persistence — starting from scratch, evolving into a complete deep learning runtime.
